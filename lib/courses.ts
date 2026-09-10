@@ -1,13 +1,25 @@
+import { buildCourse, EXPANSION, type CourseRecipe } from './course-builder.ts';
+
 export type Platform = {
   x: number;
   z: number;
   w: number;
   d: number;
-  kind?: 'belt' | 'crumble';
+  y?: number;
+  endY?: number;
+  kind?: 'belt' | 'crumble' | 'slide';
   direction?: number;
 };
 export type Obstacle = {
-  type: 'bar' | 'bumper' | 'hurdle' | 'pendulum' | 'pusher';
+  type:
+    | 'bar'
+    | 'bumper'
+    | 'hurdle'
+    | 'pendulum'
+    | 'pusher'
+    | 'hammer'
+    | 'falling';
+  y?: number;
   x: number;
   z: number;
   radius?: number;
@@ -29,6 +41,7 @@ export type Course = {
   platforms: Platform[];
   obstacles: Obstacle[];
   checkpoints: number[];
+  recipe?: CourseRecipe;
 };
 const base = (length: number, width = 16): Platform[] => [
   { x: 0, z: length / 2, w: width, d: length + 12 },
@@ -300,11 +313,17 @@ export const COURSES: Course[] = [
     ],
   },
 ];
+COURSES.push(...EXPANSION.map((recipe, i) => buildCourse(recipe, i + 11)));
+for (const [i, course] of COURSES.entries()) {
+  course.sky = ['#080f28', '#100d2b', '#071c2b'][i % 3];
+  course.color = ['#7943d4', '#216ba1', '#b43aa0', '#157d83'][i % 4];
+  course.accent = ['#30f0e2', '#ff59c7', '#ffe16b', '#71a7ff'][i % 4];
+}
 export const COLORS = [
-  '#fe8855',
-  '#ab78eb',
-  '#4ac4b0',
-  '#f1c447',
-  '#ea7dab',
-  '#68b5ed',
+  '#ff8755',
+  '#b28aff',
+  '#37e4cf',
+  '#ffe16b',
+  '#ff64be',
+  '#61c5ff',
 ];

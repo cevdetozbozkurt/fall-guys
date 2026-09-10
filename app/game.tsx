@@ -14,6 +14,7 @@ import {
   Flag,
   Gamepad2,
   Maximize,
+  Hammer,
   Pause,
   Play,
   RotateCcw,
@@ -32,7 +33,16 @@ import {
 } from '@/components/ui/dialog';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Progress } from '@/components/ui/progress';
-import { COURSES, COLORS } from '@/lib/courses';
+import { COURSES, COLORS, type Course } from '@/lib/courses';
+import {
+  buildCourse,
+  parseRecipe,
+  recipeKey,
+  DEFAULT_RECIPE,
+  MAX_SAVED_COURSES,
+  type CourseRecipe,
+} from '@/lib/course-builder';
+import CourseEditor from './course-editor';
 import { Simulation, type GameState } from '@/lib/simulation';
 import { Sound } from '@/lib/sound';
 import type { RaceScene } from '@/lib/scene';
@@ -51,6 +61,11 @@ const emptyParty: PartyView = {
   members: [],
   error: '',
   round: 0,
+  nextIn: 0,
+  nextName: '',
+  customCourses: [],
+  rotation: 'all',
+  courseMessage: '',
 };
 
 type RecordEntry = { time: number; rank: number };
@@ -88,7 +103,9 @@ function CourseMap({ index }: { index: number }) {
   return (
     <svg viewBox="0 0 200 100" aria-hidden="true" className="course-map">
       <rect width="200" height="100" fill={course.sky} />
-      <g transform="translate(98 52) rotate(-23) skewX(18) scale(1 .62)">
+      <g
+        transform={`translate(98 70) rotate(-23) skewX(18) scale(1 ${Math.min(0.62, 90 / course.length)})`}
+      >
         {course.platforms.map((p, i) => (
           <rect
             key={i}
@@ -155,13 +172,19 @@ export default function Game() {
   const [ready, setReady] = useState(false),
     [error, setError] = useState(''),
     [selected, setSelected] = useState(0),
+    [activeCourse, setActiveCourse] = useState<Course>(COURSES[0]),
+    [savedCourses, setSavedCourses] = useState<CourseRecipe[]>([]),
+    [editorDraft, setEditorDraft] = useState<CourseRecipe>(() =>
+      structuredClone(DEFAULT_RECIPE),
+    ),
+    [editingKey, setEditingKey] = useState<number | undefined>(),
     [color, setColor] = useState(0),
     [mode, setMode] = useState('race'),
     [muted, setMuted] = useState(false);
   const [snap, setSnap] = useState(initial),
-    [modal, setModal] = useState<'courses' | 'help' | 'pause' | 'party' | null>(
-      null,
-    ),
+    [modal, setModal] = useState<
+      'courses' | 'help' | 'pause' | 'party' | 'builder' | null
+    >(null),
     [records, setRecords] = useState<Record<string, RecordEntry>>({}),
     [notice, setNotice] = useState(''),
     [series, setSeries] = useState(false),
@@ -170,14 +193,20 @@ export default function Game() {
   const [partyView, setPartyView] = useState<PartyView>(emptyParty),
     [playerName, setPlayerName] = useState(''),
     [joinCode, setJoinCode] = useState(''),
-    [partyCourse, setPartyCourse] = useState(0),
+    [partyCourse, setPartyCourse] = useState(1),
     [copyState, setCopyState] = useState('');
   const inParty = ['waiting', 'racing', 'finished'].includes(partyView.status);
-  const course = COURSES[selected],
+  const course = activeCourse,
     racing = snap.state !== 'lobby',
     finished = snap.state === 'finished',
     qualified = (snap.place ?? 0) > 0 && snap.rank <= 8;
-  const completed = Object.keys(records).length;
+  const completed = Object.keys(records).filter(
+    (id) => Number(id) <= COURSES.length,
+  ).length;
+  const roomCourses = [
+    ...COURSES,
+    ...partyView.customCourses.map((r) => buildCourse(r)),
+  ];
   useEffect(() => {
     menuOpen.current = modal !== null;
     if (modal !== null) {
@@ -211,6 +240,22 @@ export default function Game() {
         }
       });
     try {
+      const recipes = JSON.parse(
+        localStorage.getItem('tumble-club-courses-v1') || '[]',
+      );
+      if (Array.isArray(recipes)) {
+        const clean = recipes
+          .slice(0, MAX_SAVED_COURSES)
+          .map(parseRecipe)
+          .filter((r): r is CourseRecipe => r !== null);
+        queueMicrotask(() => {
+          if (!destroyed) setSavedCourses(clean);
+        });
+      }
+    } catch {
+      /* The course builder remains available without storage. */
+    }
+    try {
       const saved = JSON.parse(
         localStorage.getItem('tumble-club-records') || '{}',
       );
@@ -219,7 +264,7 @@ export default function Game() {
         const r = v as RecordEntry;
         if (
           Number(k) >= 1 &&
-          Number(k) <= 10 &&
+          Number(k) <= 4294968296 &&
           Number.isFinite(r.time) &&
           r.time > 0 &&
           r.rank >= 1 &&
@@ -429,7 +474,7 @@ export default function Game() {
     };
   }, []);
 
-  const load = (i: number, start = false) => {
+  const load = (selection: number | Course, start = false) => {
     if (!sim.current || !engine.current) return;
     if (party.current && !party.current.closed) {
       setModal('party');
@@ -437,8 +482,12 @@ export default function Game() {
     }
     keys.current.clear();
     touch.current = { x: 0, z: 0 };
-    setSelected(i);
-    sim.current.reset(i);
+    const nextCourse =
+      typeof selection === 'number' ? COURSES[selection] : selection;
+    if (!nextCourse) return;
+    setSelected(nextCourse.recipe ? -1 : nextCourse.id - 1);
+    setActiveCourse(nextCourse);
+    sim.current.reset(nextCourse);
     engine.current.build();
     lastFinished.current = false;
     setNotice('');
@@ -458,7 +507,7 @@ export default function Game() {
     const championship = mode === 'championship';
     setSeries(championship);
     setSeriesPoints(0);
-    load(championship ? 0 : selected, true);
+    load(championship ? 0 : course, true);
   };
   const home = () => {
     if (party.current && !party.current.closed) {
@@ -466,7 +515,7 @@ export default function Game() {
       return;
     }
     setSeries(false);
-    load(selected);
+    load(course);
   };
   const pause = () => {
     if (sim.current) {
@@ -494,20 +543,24 @@ export default function Game() {
     try {
       const { Party: Room } = await import('@/lib/multiplayer');
       const simulation = sim.current;
+      let previousStatus = 'connecting';
       const room = new Room(simulation, {
         change: (view) => {
           setPartyView(view);
-          if (view.status === 'racing') {
-            setModal(null);
+          if (view.status === 'racing' && previousStatus !== 'racing') {
+            setModal((current) => (current === 'builder' ? current : null));
             sound.current?.unlock();
           }
-          if (view.status === 'waiting') setModal('party');
+          if (view.status === 'waiting' && previousStatus !== 'waiting')
+            setModal('party');
+          previousStatus = view.status;
         },
-        prepare: (i) => {
+        prepare: (nextCourse) => {
           keys.current.clear();
           touch.current = { x: 0, z: 0 };
-          setSelected(i);
-          setPartyCourse(i);
+          setSelected(nextCourse.recipe ? -1 : nextCourse.id - 1);
+          setActiveCourse(nextCourse);
+          setPartyCourse(nextCourse.id);
           lastFinished.current = false;
           setSnap(initial);
           setNotice('');
@@ -515,7 +568,7 @@ export default function Game() {
         },
         roster: (members) => engine.current?.setMembers(members),
         ended: (reason) => {
-          simulation.reset(simulation.course.id - 1);
+          simulation.reset(simulation.course);
           engine.current?.setMembers([]);
           engine.current?.build();
           setSnap(initial);
@@ -539,7 +592,7 @@ export default function Game() {
     setPartyView(emptyParty);
     engine.current?.memberColors.clear();
     setSeries(false);
-    load(selected);
+    load(course);
   };
   const copyInvite = async () => {
     const url = new URL(window.location.href);
@@ -551,9 +604,24 @@ export default function Game() {
       setCopyState(`Share this room code: ${partyView.code}`);
     }
   };
-  const roomLobby = () => {
-    if (party.current?.view.host) party.current.lobby(selected);
-    else setModal('party');
+  const persistCourses = (recipes: CourseRecipe[]) => {
+    try {
+      localStorage.setItem('tumble-club-courses-v1', JSON.stringify(recipes));
+      setSavedCourses(recipes);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const saveCourse = (recipe: CourseRecipe, replaces?: number) => {
+    const next = savedCourses.filter(
+      (r) => recipeKey(r) !== replaces && recipeKey(r) !== recipeKey(recipe),
+    );
+    if (next.length >= MAX_SAVED_COURSES)
+      return 'You have 16 saved courses. Delete one to make space.';
+    return persistCourses([...next, recipe])
+      ? 'Saved on this device.'
+      : 'Saving is unavailable. Allow browser storage, or test this course without saving.';
   };
   const toggleSound = () => {
     const next = !muted;
@@ -608,11 +676,14 @@ export default function Game() {
               Play
             </button>
             <button onClick={() => setModal('courses')}>
-              The courses <span>10</span>
+              The courses <span>{COURSES.length}</span>
             </button>
             <button className="party-nav" onClick={() => setModal('party')}>
               <Users size={17} />
               {inParty ? `Room ${partyView.code}` : 'Play with friends'}
+            </button>
+            <button onClick={() => setModal('builder')}>
+              <Hammer size={17} /> Course builder
             </button>
             <button onClick={() => setModal('help')}>
               How to play <ArrowUpRight size={15} />
@@ -622,7 +693,7 @@ export default function Game() {
             <span className="completion">
               <Trophy size={19} />
               <b>{completed}</b>
-              <span>/ 10</span>
+              <span>/ {COURSES.length}</span>
             </span>
             <span className="header-rule" />
             <button
@@ -643,21 +714,19 @@ export default function Game() {
             <div className="lobby-shade" />
             <div className="lobby-copy">
               <div className="eyebrow">
-                <span className="live-dot" /> SMALL RACERS. BIG CHAOS.
+                <Sparkles size={15} /> COSMIC ARCADE · 30 COURSES
               </div>
               <h1>
-                READY,
-                <br />
-                SET,
+                RACE THE
                 <br />
                 <span>
-                  TUMBLE<span className="title-star">✳</span>
+                  COSMOS<span className="title-star">✳</span>
                 </span>
               </h1>
               <p>
-                Dodge the chaos. Stick the landing.
+                Climb higher. Slide faster. Dodge meteors.
                 <br />
-                Make a glorious mess of the finish line.
+                Build your own route and race your friends.
               </p>
               <RadioGroup
                 value={mode}
@@ -705,7 +774,7 @@ export default function Game() {
               <div className="under-play">
                 <Users size={15} />
                 {mode === 'championship'
-                  ? '10 rounds · Finish in the top 8 to advance'
+                  ? '30 rounds · Finish in the top 8 to advance'
                   : 'You + 11 bots · One delightfully chaotic race'}
               </div>
               <button
@@ -716,11 +785,19 @@ export default function Game() {
                 <Users size={17} />
                 Play with friends <ArrowRight size={17} />
               </button>
+              <button
+                className="builder-shortcut text-button"
+                onClick={() => setModal('builder')}
+              >
+                <Hammer size={17} /> Build your own course
+              </button>
             </div>
             <div className="course-sticker">
               <span>
                 <i />
-                COURSE {String(selected + 1).padStart(2, '0')}
+                {course.recipe
+                  ? 'CUSTOM COURSE'
+                  : `COURSE ${String(selected + 1).padStart(2, '0')}`}
               </span>
               <strong>{course.name}</strong>
               <div>
@@ -781,8 +858,10 @@ export default function Game() {
                 <div>
                   <span>
                     {series
-                      ? `CHAMPIONSHIP · ROUND ${selected + 1}/10`
-                      : `COURSE ${String(selected + 1).padStart(2, '0')} / 10`}
+                      ? `CHAMPIONSHIP · ROUND ${selected + 1}/${COURSES.length}`
+                      : course.recipe
+                        ? 'CUSTOM COURSE'
+                        : `COURSE ${String(selected + 1).padStart(2, '0')} / ${COURSES.length}`}
                   </span>
                   <h2>{course.name}</h2>
                 </div>
@@ -819,6 +898,11 @@ export default function Game() {
             )}
             {notice && snap.state === 'racing' && (
               <output className="notice">{notice}</output>
+            )}
+            {inParty && partyView.error && (
+              <output className="connection-notice" aria-live="polite">
+                {partyView.error}
+              </output>
             )}
             <div className="race-bottom">
               <div className="keyboard-hint">
@@ -905,7 +989,7 @@ export default function Game() {
           <div className="shelf-heading">
             <div>
               <span className="section-kicker">PICK YOUR PLAYGROUND</span>
-              <h2>Ten ways to tumble.</h2>
+              <h2>30 worlds. Endless routes.</h2>
             </div>
             <button className="text-button" onClick={() => setModal('courses')}>
               Explore all courses <ArrowRight size={17} />
@@ -961,29 +1045,65 @@ export default function Game() {
       >
         <DialogContent
           className={
-            modal === 'courses' ? 'game-dialog courses-dialog' : 'game-dialog'
+            modal === 'builder'
+              ? 'game-dialog builder-dialog'
+              : modal === 'courses'
+                ? 'game-dialog courses-dialog'
+                : 'game-dialog'
           }
         >
           <DialogTitle>
-            {modal === 'party'
-              ? 'Better with friends.'
-              : modal === 'courses'
-                ? 'Pick your playground.'
-                : modal === 'help'
-                  ? 'A crash course in tumbling.'
-                  : 'Taking a breather?'}
+            {modal === 'builder'
+              ? 'Build your next challenge.'
+              : modal === 'party'
+                ? 'Better with friends.'
+                : modal === 'courses'
+                  ? 'Pick your playground.'
+                  : modal === 'help'
+                    ? 'A crash course in tumbling.'
+                    : 'Taking a breather?'}
           </DialogTitle>
           <DialogDescription>
-            {modal === 'party'
-              ? 'Create a room, share the code, and race together. Up to 8 friends.'
-              : modal === 'courses'
-                ? 'Ten original courses. Pick any one and make it to the finish.'
-                : modal === 'help'
-                  ? 'A little timing goes a long way. Here’s everything you need.'
-                  : inParty
-                    ? 'Online races keep running while this menu is open.'
-                    : 'Your race is paused. Your rivals can wait.'}
+            {modal === 'builder'
+              ? 'Arrange sections, test your route, and add it to your friend room.'
+              : modal === 'party'
+                ? 'Create a room, share the code, and race together. Up to 8 friends.'
+                : modal === 'courses'
+                  ? 'Thirty original courses. Pick any one and make it to the finish.'
+                  : modal === 'help'
+                    ? 'A little timing goes a long way. Here’s everything you need.'
+                    : inParty
+                      ? 'Online races keep running while this menu is open.'
+                      : 'Your race is paused. Your rivals can wait.'}
           </DialogDescription>
+          {modal === 'builder' && (
+            <CourseEditor
+              saved={savedCourses}
+              inParty={inParty}
+              roomCourses={partyView.customCourses}
+              draft={editorDraft}
+              setDraft={setEditorDraft}
+              editingKey={editingKey}
+              setEditingKey={setEditingKey}
+              courseMessage={partyView.courseMessage}
+              onSave={saveCourse}
+              onDelete={(key) => {
+                if (
+                  !persistCourses(
+                    savedCourses.filter((r) => recipeKey(r) !== key),
+                  )
+                )
+                  setNotice('Browser storage is unavailable.');
+              }}
+              onTest={(recipe) => {
+                setSeries(false);
+                load(buildCourse(recipe), true);
+              }}
+              onAddToRoom={(recipe) =>
+                party.current?.addCourse(recipe) ?? false
+              }
+            />
+          )}
           {modal === 'party' && (
             <div className="party-content">
               {partyView.error && (
@@ -1107,16 +1227,24 @@ export default function Game() {
                         value={partyCourse}
                         onChange={(e) => setPartyCourse(Number(e.target.value))}
                       >
-                        {COURSES.map((c, i) => (
-                          <NativeSelectOption key={c.id} value={i}>
-                            {String(c.id).padStart(2, '0')} · {c.name}
+                        {roomCourses.map((c) => (
+                          <NativeSelectOption key={c.id} value={c.id}>
+                            {c.recipe
+                              ? 'Custom'
+                              : String(c.id).padStart(2, '0')}{' '}
+                            · {c.name}
                           </NativeSelectOption>
                         ))}
                       </NativeSelect>
                       <button
                         className="play-button"
                         disabled={partyView.members.length < 2}
-                        onClick={() => party.current?.start(partyCourse)}
+                        onClick={() =>
+                          party.current?.start(
+                            roomCourses.find((c) => c.id === partyCourse) ??
+                              COURSES[0],
+                          )
+                        }
                       >
                         START RACE <Flag size={23} />
                       </button>
@@ -1128,6 +1256,59 @@ export default function Game() {
                       )}
                     </>
                   )}
+                  <div className="room-rotation">
+                    <strong>Keep the party going</strong>
+                    <p>
+                      Every race ends with a 5-second countdown, then a random
+                      course starts. This room stays together until the host
+                      leaves.
+                    </p>
+                    {partyView.host ? (
+                      <NativeSelect
+                        aria-label="Automatic course rotation"
+                        value={partyView.rotation}
+                        onChange={(e) =>
+                          party.current?.setRotation(
+                            e.target.value as 'all' | 'custom',
+                          )
+                        }
+                      >
+                        <NativeSelectOption value="all">
+                          All 30 courses + room creations
+                        </NativeSelectOption>
+                        <NativeSelectOption
+                          value="custom"
+                          disabled={!partyView.customCourses.length}
+                        >
+                          Room creations only
+                        </NativeSelectOption>
+                      </NativeSelect>
+                    ) : (
+                      <p>
+                        Rotation:{' '}
+                        {partyView.rotation === 'custom'
+                          ? 'Room creations'
+                          : 'All courses + room creations'}
+                      </p>
+                    )}
+                    <button
+                      className="secondary-button"
+                      onClick={() => setModal('builder')}
+                    >
+                      <Hammer size={18} /> Build and add a course
+                    </button>
+                    <span>
+                      {partyView.customCourses.length} / 16 custom courses in
+                      this room
+                    </span>
+                    {partyView.customCourses.length > 0 && (
+                      <ul>
+                        {partyView.customCourses.map((r) => (
+                          <li key={recipeKey(r)}>{r.name}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
                   {!partyView.host && partyView.status === 'waiting' && (
                     <div className="waiting-host">
                       Waiting for the host to start the race…
@@ -1151,7 +1332,7 @@ export default function Game() {
           {modal === 'courses' && (
             <div className="course-grid">
               {COURSES.map((c, i) => {
-                const Icon = icons[i];
+                const Icon = icons[i % icons.length];
                 return (
                   <button
                     key={c.id}
@@ -1240,7 +1421,7 @@ export default function Game() {
               </div>
               <p className="help-fine">
                 Quick race: finish any course within 150 seconds. Championship:
-                place in the top 8 in all ten rounds. Your course records are
+                place in the top 8 in all 30 rounds. Your course records are
                 saved on this device.
               </p>
             </div>
@@ -1253,7 +1434,7 @@ export default function Game() {
               {!inParty && (
                 <button
                   className="secondary-button"
-                  onClick={() => load(selected, true)}
+                  onClick={() => load(course, true)}
                 >
                   <RotateCcw size={17} />
                   Restart course
@@ -1262,6 +1443,13 @@ export default function Game() {
               <button className="secondary-button" onClick={toggleSound}>
                 {muted ? <VolumeX size={17} /> : <Volume2 size={17} />}Sound{' '}
                 {muted ? 'off' : 'on'}
+              </button>
+              <button
+                className="secondary-button"
+                onClick={() => setModal(inParty ? 'party' : 'builder')}
+              >
+                <Hammer size={17} />
+                {inParty ? 'Room & course builder' : 'Course builder'}
               </button>
               <button
                 className="text-button"
@@ -1275,7 +1463,10 @@ export default function Game() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={finished} onOpenChange={() => {}}>
+      <Dialog
+        open={finished && modal !== 'builder' && modal !== 'party'}
+        onOpenChange={() => {}}
+      >
         <DialogContent
           className="game-dialog result-dialog"
           showCloseButton={false}
@@ -1290,7 +1481,7 @@ export default function Game() {
             )}
           </div>
           <span className="section-kicker">
-            {series && selected === 9 && qualified
+            {series && selected === COURSES.length - 1 && qualified
               ? 'CHAMPIONSHIP COMPLETE'
               : snap.place
                 ? 'FINISH LINE, MEET LEGEND.'
@@ -1299,7 +1490,7 @@ export default function Game() {
           <DialogTitle>
             {series
               ? qualified
-                ? selected === 9
+                ? selected === COURSES.length - 1
                   ? 'THE CROWN IS YOURS!'
                   : 'QUALIFIED!'
                 : 'SO CLOSE!'
@@ -1336,7 +1527,7 @@ export default function Game() {
               <strong>
                 {seriesPoints + (qualified ? Math.max(1, 13 - snap.rank) : 0)}
               </strong>{' '}
-              · Round {selected + 1} of 10
+              · Round {selected + 1} of {COURSES.length}
             </p>
           )}
           {inParty ? (
@@ -1368,38 +1559,35 @@ export default function Game() {
                     </li>
                   ))}
               </ul>
-              {partyView.host ? (
-                <button className="play-button" onClick={roomLobby}>
-                  BACK TO THE ROOM <Users size={23} />
-                </button>
-              ) : (
-                <p className="waiting-host">
-                  Waiting for the host to choose the next course…
-                </p>
-              )}
+              <output className="next-round">
+                <span>NEXT RACE IN</span>
+                <strong>{partyView.nextIn || 'GO'}</strong>
+                <b>{partyView.nextName}</b>
+                <small>Same room. Same friends. New course.</small>
+              </output>
               <button className="text-button" onClick={leaveParty}>
                 Leave room
               </button>
             </>
-          ) : (!series || qualified) && selected < 9 && !!snap.place ? (
+          ) : (!series || qualified) &&
+            selected >= 0 &&
+            selected < COURSES.length - 1 &&
+            !!snap.place ? (
             <button className="play-button" onClick={next}>
               NEXT COURSE <ArrowRight size={24} />
             </button>
-          ) : series && selected === 9 && qualified ? (
+          ) : series && selected === COURSES.length - 1 && qualified ? (
             <button className="play-button" onClick={home}>
               CHAMPION’S LAP COMPLETE <Crown size={24} />
             </button>
           ) : (
-            <button
-              className="play-button"
-              onClick={() => load(selected, true)}
-            >
+            <button className="play-button" onClick={() => load(course, true)}>
               LET’S GO AGAIN <RotateCcw size={22} />
             </button>
           )}
           {!inParty && (
             <div className="result-links">
-              <button onClick={() => load(selected, true)}>
+              <button onClick={() => load(course, true)}>
                 <RotateCcw size={15} />
                 Race again
               </button>

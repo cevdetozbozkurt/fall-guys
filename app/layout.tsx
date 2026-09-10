@@ -2,9 +2,9 @@ import type { Metadata } from 'next';
 import './globals.css';
 export const metadata: Metadata = {
   icons: { icon: '/favicon.svg' },
-  title: 'Tumble Club — Ready, Set, Tumble',
+  title: 'Tumble Club — Cosmic Arcade',
   description:
-    'Jump, dive, and tumble through ten original 3D obstacle courses. Race the field or take on the full championship.',
+    'Race 30 cosmic obstacle courses, build your own routes, and keep racing with friends in online rooms.',
 };
 export default function RootLayout({
   children,

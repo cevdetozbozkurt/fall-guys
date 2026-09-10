@@ -22,14 +22,15 @@
 }
 :root,
 .dark {
-  --background: #faf9f5;
-  --foreground: #35284d;
-  --primary: #7651cd;
-  --primary-foreground: #fffdf8;
-  --muted: #eeebf5;
-  --muted-foreground: #756c83;
-  --popover: #fffcf6;
-  --border: #e2dce9;
+  color-scheme: dark;
+  --background: #080d20;
+  --foreground: #eef5ff;
+  --primary: #bd85ff;
+  --primary-foreground: #0c1027;
+  --muted: #1b2747;
+  --muted-foreground: #a9b9d7;
+  --popover: #111b34;
+  --border: #344869;
   --radius: 1rem;
 }
 * {
@@ -1569,6 +1570,879 @@ kbd {
 }
 .game-shell:has(.party-nav) .topbar nav {
   gap: 23px;
+}
+/* The cosmic arcade uses luminous course edges and dark instrument panels. */
+body {
+  background: #080d20;
+}
+button:focus-visible {
+  outline-color: #53f4e6;
+}
+button:disabled {
+  cursor: not-allowed;
+}
+.topbar {
+  height: 86px;
+  background: #0c1328;
+  border-bottom: 1px solid #34476e;
+}
+.brand {
+  color: #f0f3ff;
+  transform: none;
+  letter-spacing: -0.6px;
+}
+.brand-symbol {
+  background: #6537ab;
+  color: #64fff0;
+  border: 1px solid #af75ff;
+  box-shadow: 0 0 24px #aa53ff35;
+}
+.brand-bottom {
+  color: #74f5ed;
+}
+.topbar nav button,
+.party-nav {
+  color: #bfcce4 !important;
+}
+.topbar nav button.nav-active {
+  color: #59e9df !important;
+}
+.nav-active:after {
+  background: #59e9df;
+  box-shadow: 0 0 14px #59e9df;
+}
+.topbar nav button span {
+  color: #b9a0ff;
+  background: #242345;
+  width: auto;
+  padding: 0 6px;
+}
+.header-rule {
+  background: #34476e;
+}
+.completion svg {
+  color: #ffe185;
+}
+.completion > span {
+  color: #a9b9d7;
+}
+.icon-button:hover {
+  background: #273657;
+}
+.arena {
+  background: #080f28 url('../public/cosmos.webp') center / cover;
+  height: 610px;
+}
+.lobby-shade {
+  background: linear-gradient(
+    90deg,
+    #080d20f5 0%,
+    #080d20db 27%,
+    #080d2030 53%,
+    transparent 75%
+  );
+}
+.lobby-copy {
+  top: 60px;
+  width: 420px;
+}
+.eyebrow {
+  color: #71e4ec;
+  font-size: 12px;
+  letter-spacing: 1.6px;
+}
+.lobby-copy h1 {
+  color: #f0f2ff;
+  font-size: clamp(54px, 5.1vw, 77px);
+  line-height: 1.05;
+  letter-spacing: -3.5px;
+  transform: none;
+  margin: 24px 0 20px;
+}
+.lobby-copy h1 > span {
+  color: #ff85db;
+  text-shadow: 0 0 35px #e345b950;
+}
+.title-star {
+  color: #6effed;
+  font-size: 32px;
+  right: -33px;
+  top: 5px;
+}
+.lobby-copy > p {
+  color: #b6c8e2;
+  font-size: 16px;
+  line-height: 1.7;
+}
+.mode-picker {
+  background: #152540e8;
+  border: 1px solid #304a6c;
+}
+.mode-option {
+  color: #a9bad9;
+  font-size: 14px;
+}
+.mode-option.chosen {
+  color: #96fff3;
+  background: #284364;
+  box-shadow: none;
+}
+.play-button {
+  background: linear-gradient(115deg, #7443c9, #ac45ac);
+  color: #fff5ff;
+  border: 1px solid #c286f2;
+  border-radius: 10px;
+  box-shadow:
+    0 4px 0 #442664,
+    0 0 30px #a349bc28;
+}
+.play-button:hover {
+  background: linear-gradient(115deg, #8755df, #bd52bc);
+  box-shadow:
+    0 5px 0 #442664,
+    0 0 35px #c054d43a;
+}
+.under-play {
+  color: #aabddc;
+  font-size: 13px;
+}
+.friends-button,
+.text-button,
+.builder-shortcut {
+  color: #8bece8;
+  font-size: 14px;
+}
+.friends-button {
+  padding-bottom: 3px;
+  margin-top: 5px;
+}
+.text-button:hover {
+  color: #ffc0ec;
+}
+.course-sticker {
+  color: #f3f6ff;
+  background: #122540e8;
+  border: 1px solid #4ccdcaa0;
+  border-radius: 6px;
+  box-shadow: 0 0 30px #25dce01c;
+  transform: rotate(2deg);
+}
+.course-sticker > span {
+  color: #70ece6;
+  font-size: 12px;
+}
+.course-sticker > div {
+  color: #b9cbea;
+  font-size: 13px;
+}
+.course-sticker i {
+  background: #65fff0;
+}
+.character-picker {
+  background: #11243de8;
+  border-color: #426b87;
+  border-radius: 8px;
+}
+.character-picker > span {
+  color: #c3d8ed;
+  font-size: 12px;
+}
+.character-picker button {
+  border-color: #14223c;
+}
+.character-picker button.selected {
+  outline-color: #8ffff0;
+}
+.scene-note {
+  color: #94d9e3;
+}
+.note-line {
+  background: #94d9e3;
+}
+.course-shelf {
+  background: #0d1429;
+  border-top: 1px solid #34476e;
+}
+.section-kicker {
+  color: #8caed4;
+  font-size: 12px;
+}
+.course-shelf footer {
+  color: #94aac9;
+  font-size: 12px;
+  border-color: #283750;
+}
+.course-card,
+.grid-course {
+  background: #14213a;
+  border-color: #334b70;
+}
+.course-card {
+  min-width: 210px;
+}
+.course-card-label strong,
+.grid-course strong {
+  font-size: 14px;
+  white-space: normal;
+}
+.course-card.active,
+.selected-course {
+  outline-color: #67e6df;
+}
+.course-number,
+.grid-thumbnail > span {
+  background: #10243dec;
+  color: #8ef2ef;
+  font-size: 12px;
+}
+.grid-course small {
+  color: #a3b9d9;
+  font-size: 12px;
+}
+.course-strip {
+  scrollbar-color: #527099 transparent;
+}
+.hud-top > div,
+.race-objective,
+.race-progress,
+.keyboard-hint,
+.race-bottom > .icon-button {
+  color: #eef5ff;
+  background: #111e38e8;
+  border: 1px solid #426186;
+  border-radius: 9px;
+  box-shadow: 0 3px 20px #03061335;
+}
+.hud-course span,
+.hud-clock > span {
+  color: #8fe0ec;
+  font-size: 12px;
+}
+.hud-rank small,
+.race-objective > span {
+  color: #b1c5e3;
+}
+.race-objective > span {
+  font-size: 12px;
+}
+.race-bottom {
+  color: #e0eefe;
+}
+.keyboard-hint {
+  font-size: 13px;
+}
+kbd {
+  background: #233959;
+  color: #d8edff;
+  border-color: #4d7198;
+}
+.race-progress [data-slot='progress-track'] {
+  background: #304363;
+}
+.race-progress > span {
+  font-size: 12px;
+}
+.countdown > span,
+.countdown p {
+  background: #10263fe8;
+  color: #d3fafa;
+  border: 1px solid #3b9fa4;
+}
+.countdown strong {
+  color: #8ffff1;
+  text-shadow:
+    0 0 50px #34d6df,
+    0 6px 0 #543193;
+}
+.notice {
+  background: #153c54;
+  color: #c4fff0;
+  border: 1px solid #53bcbd;
+}
+.game-dialog {
+  background: #101b32 !important;
+  color: #eef5ff;
+  border: 1px solid #4a6b8e;
+  border-radius: 14px !important;
+  box-shadow:
+    0 0 0 1px #86bbcf14,
+    0 30px 100px #000a;
+}
+.game-dialog [data-slot='dialog-description'],
+.help-row p,
+.help-row small,
+.help-fine {
+  color: #a9bfdc;
+}
+.game-dialog [data-slot='dialog-description'] {
+  font-size: 16px;
+}
+.help-row {
+  border-color: #314362;
+}
+.help-note,
+.secondary-button,
+.waiting-host {
+  background: #1c3150;
+  color: #b2e7f5;
+  border-color: #415f82;
+}
+.secondary-button:hover {
+  background: #2c4468;
+}
+.result-dialog [data-slot='dialog-title'] {
+  color: #e1acff;
+}
+.result-icon {
+  color: #ffe8a0;
+  background: #44324e;
+  border: 1px solid #af8f69;
+}
+.result-stats {
+  background: #1c2b47;
+}
+.result-stats span,
+.result-links button,
+.series-score {
+  color: #afbfdd;
+  font-size: 13px;
+}
+.result-stats strong {
+  color: #e5efff;
+}
+.result-stats > div + div {
+  border-color: #3e5377;
+}
+.party-content [data-slot='input'],
+.course-editor [data-slot='input'],
+.game-dialog select {
+  background: #0c1429;
+  color: #e9f5ff;
+  border-color: #465b7e;
+  font-size: 16px;
+}
+.game-dialog select option {
+  background: #101b32;
+  color: #e9f5ff;
+}
+.party-content > label {
+  font-size: 14px;
+}
+.party-note,
+.party-divider,
+.roster-heading > span,
+.party-roster li > span:last-child {
+  color: #a8bcda;
+  font-size: 14px;
+}
+.party-error {
+  color: #ffd4bb;
+  background: #412c35;
+  border-color: #976951;
+}
+.invite-box {
+  background: #242b50;
+  border: 1px solid #68579f;
+}
+.invite-box span {
+  color: #c0a9f4;
+  font-size: 12px;
+}
+.invite-box strong {
+  color: #85f8ee;
+}
+.copy-feedback {
+  color: #90efd3;
+  font-size: 14px;
+}
+.party-roster li {
+  background: #192942;
+  border-color: #3a4e6d;
+}
+.party-results li {
+  border-color: #334968;
+  font-size: 14px;
+}
+.party-results li > b,
+.party-results li > strong {
+  color: #b1dce8;
+  font-size: 14px;
+}
+.error-card {
+  background: #192942;
+  border: 1px solid #657298;
+}
+.joystick {
+  background: #16375e88;
+  border-color: #83dfd9c9;
+  color: #aeefeeb8;
+}
+.joystick > div > span {
+  background: #86dcd4b3;
+}
+.touch-actions button,
+.touch-actions button:last-child {
+  background: #67419fd9;
+  border-color: #d8b4ff;
+  color: #fff;
+}
+.connection-notice {
+  position: absolute;
+  top: 170px;
+  left: 30px;
+  max-width: min(450px, 85%);
+  color: #ffe2b0;
+  background: #372940ee;
+  padding: 14px;
+  border-radius: 8px;
+  font-size: 14px;
+}
+.room-rotation {
+  display: grid;
+  gap: 12px;
+  background: #1a2b45;
+  border: 1px solid #3a5778;
+  border-radius: 10px;
+  padding: 16px;
+}
+.room-rotation p,
+.room-rotation > span {
+  color: #afc5e1;
+  font-size: 14px;
+  line-height: 1.6;
+  margin: 0;
+}
+.room-rotation ul {
+  max-height: 130px;
+  overflow: auto;
+  padding-left: 20px;
+  color: #c2dbea;
+  font-size: 14px;
+  margin: 0;
+}
+.next-round {
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  background: #123146;
+  border: 1px solid #438b97;
+  padding: 15px;
+  border-radius: 10px;
+}
+.next-round > span {
+  font-size: 12px;
+  color: #9adbe4;
+  letter-spacing: 2px;
+}
+.next-round > strong {
+  font:
+    900 52px/1 'Arial Black',
+    sans-serif;
+  color: #73fff0;
+}
+.next-round > b {
+  font-size: 18px;
+}
+.next-round > small {
+  color: #accee1;
+  font-size: 13px;
+}
+.builder-dialog {
+  max-width: 1140px !important;
+}
+.course-editor {
+  display: grid;
+  gap: 22px;
+}
+.course-editor h3 {
+  margin: 0 0 12px;
+  font-size: 18px;
+  color: #e7f7ff;
+}
+.editor-topline {
+  display: flex;
+  align-items: end;
+  gap: 16px;
+}
+.editor-topline > label {
+  display: grid;
+  gap: 8px;
+  flex: 1;
+  font-size: 14px;
+}
+.editor-topline input {
+  height: 44px;
+}
+.editor-layout {
+  display: grid;
+  grid-template-columns: 1fr 1.1fr;
+  gap: 24px;
+}
+.module-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+.module-grid button {
+  display: grid;
+  grid-template-columns: 28px 1fr 14px;
+  gap: 8px;
+  align-items: center;
+  padding: 13px;
+  text-align: left;
+  background: #1a2a45;
+  border: 1px solid #3e5577;
+  border-radius: 9px;
+}
+.module-grid button:hover {
+  background: #293953;
+  border-color: #76d8de;
+}
+.module-grid strong {
+  font-size: 14px;
+}
+.module-grid span {
+  grid-row: 2;
+  grid-column: 1 / -1;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #a9beda;
+}
+.module-grid button > svg:last-child {
+  grid-row: 1;
+  grid-column: 3;
+  color: #a3b9d4;
+}
+.sequence-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.sequence-heading span {
+  font-size: 13px;
+  color: #a3c3e0;
+}
+.editor-hint {
+  font-size: 14px;
+  color: #adbfda;
+  line-height: 1.6;
+  margin: 0 0 12px;
+}
+.route-end {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  color: #75e9de;
+  font-size: 12px;
+  letter-spacing: 1px;
+}
+.sequence-list {
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+  max-height: 520px;
+  overflow: auto;
+}
+.sequence-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #405378;
+  background: #18243d;
+  padding: 10px;
+  border-radius: 9px;
+}
+.sequence-list li.dragging {
+  opacity: 0.45;
+  border-style: dashed;
+}
+.sequence-list li > svg {
+  color: #748cb2;
+  flex-shrink: 0;
+}
+.sequence-list li > b {
+  font-size: 14px;
+}
+.segment-settings {
+  display: grid;
+  gap: 7px;
+  flex: 1;
+  min-width: 0;
+}
+.segment-settings [data-slot='native-select-wrapper'] {
+  width: 100%;
+}
+.segment-settings select {
+  width: 100%;
+  font-size: 14px;
+}
+.segment-actions {
+  display: grid;
+  gap: 4px;
+}
+.segment-actions button {
+  width: 30px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #4a5c7b;
+  border-radius: 5px;
+  background: #253954;
+  color: #b6def0;
+}
+.segment-actions button:disabled {
+  opacity: 0.3;
+}
+.elevation-preview {
+  background: #0b1428;
+  border: 1px solid #334b6b;
+  padding: 13px;
+  border-radius: 9px;
+}
+.elevation-preview > span {
+  font-size: 12px;
+  letter-spacing: 1.5px;
+  color: #98b5d8;
+}
+.elevation-preview svg {
+  width: 100%;
+  height: 80px;
+}
+.editor-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.editor-actions .play-button {
+  width: auto;
+  justify-content: center;
+  font-size: 15px;
+  padding: 14px 20px;
+}
+.editor-message {
+  color: #9beedf;
+  background: #183844;
+  padding: 12px;
+  font-size: 14px;
+  border-radius: 8px;
+}
+.saved-courses h3 {
+  display: flex;
+  justify-content: space-between;
+}
+.saved-courses h3 > span,
+.saved-courses > p {
+  color: #adc2df;
+  font-size: 14px;
+}
+.saved-courses > div {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 12px 0;
+  border-top: 1px solid #344764;
+}
+.saved-courses > div > div {
+  display: grid;
+  gap: 4px;
+  flex: 1;
+}
+.saved-courses strong {
+  font-size: 15px;
+}
+.saved-courses span {
+  font-size: 13px;
+  color: #9cb6d5;
+}
+@media (min-width: 1500px) {
+  .arena {
+    height: 650px;
+  }
+  .lobby-copy {
+    top: 70px;
+  }
+}
+@media (max-width: 1100px) {
+  .topbar {
+    padding: 0 20px;
+  }
+  .game-shell:has(.party-nav) .topbar nav {
+    gap: 18px;
+  }
+  .completion {
+    display: none;
+  }
+  .lobby-copy {
+    width: 380px;
+  }
+  .editor-layout {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+@media (max-width: 760px) {
+  .topbar {
+    height: 76px;
+    padding: 0 15px;
+    gap: 10px;
+  }
+  .topbar nav button {
+    font-size: 13px;
+  }
+  .game-shell:has(.party-nav) .topbar nav {
+    gap: 13px;
+  }
+  .topbar nav button svg {
+    display: none;
+  }
+  .topbar nav button:last-child {
+    display: none;
+  }
+  .header-actions {
+    display: none;
+  }
+  .arena {
+    height: 760px;
+  }
+  .lobby-copy {
+    left: 24px;
+    top: 33px;
+    width: calc(100% - 48px);
+    max-width: 340px;
+  }
+  .lobby-copy h1 {
+    font-size: 53px;
+    letter-spacing: -2.5px;
+  }
+  .lobby-copy > p {
+    font-size: 15px;
+  }
+  .lobby-shade {
+    background: linear-gradient(
+      130deg,
+      #080d20ed,
+      #080d20b5 43%,
+      transparent 75%
+    );
+  }
+  .eyebrow {
+    font-size: 12px;
+    letter-spacing: 1px;
+  }
+  .under-play {
+    font-size: 12px;
+  }
+  .mode-option {
+    font-size: 13px;
+  }
+  .friends-button {
+    font-size: 14px;
+  }
+  .builder-shortcut {
+    margin-top: 6px;
+  }
+  .course-sticker {
+    bottom: 104px;
+  }
+  .course-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .grid-course strong {
+    font-size: 14px;
+  }
+  .shelf-heading {
+    align-items: start;
+    gap: 14px;
+  }
+  .shelf-heading .text-button {
+    font-size: 13px;
+    max-width: 120px;
+    text-align: right;
+  }
+  .section-kicker {
+    font-size: 12px;
+  }
+  .hud-top {
+    flex-wrap: wrap;
+  }
+  .hud-course {
+    flex: 1;
+    min-width: 170px;
+  }
+  .hud-course h2 {
+    font-size: 15px;
+  }
+  .hud-course span,
+  .hud-clock > span {
+    font-size: 12px;
+  }
+  .hud-rank {
+    margin-left: 0;
+    padding: 18px 10px;
+  }
+  .hud-clock strong {
+    font-size: 18px;
+  }
+  .race-objective {
+    top: 110px;
+    max-width: calc(100% - 28px);
+    font-size: 13px;
+  }
+  .race-objective > span {
+    display: none;
+  }
+  .connection-notice {
+    left: 14px;
+    top: 170px;
+  }
+  .game-dialog {
+    padding: 22px !important;
+  }
+  .editor-layout {
+    grid-template-columns: 1fr;
+  }
+  .editor-topline {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .module-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .module-grid button {
+    padding: 10px;
+  }
+  .module-grid strong {
+    font-size: 14px;
+  }
+  .module-grid span {
+    font-size: 13px;
+  }
+  .editor-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+  .saved-courses > div {
+    gap: 12px;
+  }
+  .next-round > strong {
+    font-size: 40px;
+  }
+}
+@media (max-width: 380px) {
+  .topbar nav button {
+    font-size: 12px;
+  }
+  .brand-symbol {
+    display: none;
+  }
+  .lobby-copy h1 {
+    font-size: 47px;
+  }
+  .hud-clock {
+    display: none;
+  }
 }
 @media (max-width: 1100px) {
   .topbar nav button:last-child {

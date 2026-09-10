@@ -6,7 +6,14 @@ import {
   type Racer,
   type GameState,
 } from './simulation.ts';
-import { COURSES } from './courses.ts';
+import { COURSES, type Course } from './courses.ts';
+import {
+  buildCourse,
+  parseRecipe,
+  recipeKey,
+  MAX_SAVED_COURSES,
+  type CourseRecipe,
+} from './course-builder.ts';
 
 export type Member = { id: number; name: string; color: number; host: boolean };
 export type PartyView = {
@@ -23,6 +30,11 @@ export type PartyView = {
   members: Member[];
   error: string;
   round: number;
+  nextIn: number;
+  nextName: string;
+  customCourses: CourseRecipe[];
+  rotation: 'all' | 'custom';
+  courseMessage: string;
 };
 export const EMPTY_PARTY: PartyView = {
   status: 'offline',
@@ -32,6 +44,11 @@ export const EMPTY_PARTY: PartyView = {
   members: [],
   error: '',
   round: 0,
+  nextIn: 0,
+  nextName: '',
+  customCourses: [],
+  rotation: 'all',
+  courseMessage: '',
 };
 export type WorldPacket = {
   type: 'world';
@@ -45,6 +62,8 @@ export type WorldPacket = {
   racers: Racer[];
   tiles: [number, number][];
   finishOrder: number[];
+  nextIn?: number;
+  nextName?: string;
 };
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const cleanCode = (value: string) =>
@@ -115,7 +134,7 @@ export function isWorld(value: unknown): value is WorldPacket {
     Number.isInteger(v.sequence) &&
     Number.isInteger(v.course) &&
     v.course >= 0 &&
-    v.course < 10 &&
+    v.course < 4294968296 &&
     ['countdown', 'racing', 'finished'].includes(v.state) &&
     Number.isFinite(v.time) &&
     Number.isFinite(v.worldTime) &&
@@ -143,7 +162,9 @@ export function isWorld(value: unknown): value is WorldPacket {
           'finishTime',
         ].every((k) => Number.isFinite(r[k as keyof Racer])) &&
         Math.abs(r.x) < 100 &&
-        Math.abs(r.z) < 300,
+        Math.abs(r.z) < 500 &&
+        Math.abs(r.y) < 100 &&
+        typeof r.sliding === 'boolean',
     ) &&
     Array.isArray(v.tiles) &&
     v.tiles.length < 200 &&
@@ -189,7 +210,7 @@ export function restoreWorld(sim: Simulation, packet: WorldPacket) {
 
 type Callbacks = {
   change: (view: PartyView) => void;
-  prepare: (course: number) => void;
+  prepare: (course: Course) => void;
   roster: (members: Member[], self: number) => void;
   ended: (reason: string) => void;
 };
@@ -214,9 +235,19 @@ export class Party {
   inputTimes = new Map<number, number>();
   inputSequences = new Map<number, number>();
   respawnTimes = new Map<number, number>();
-  constructor(sim: Simulation, callbacks: Callbacks) {
+  submissionTimes = new Map<number, number>();
+  nextCourse: Course | null = null;
+  intermissionEnd = 0;
+  clock: () => number;
+  reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  constructor(
+    sim: Simulation,
+    callbacks: Callbacks,
+    clock = () => performance.now(),
+  ) {
     this.sim = sim;
     this.callbacks = callbacks;
+    this.clock = clock;
   }
   emit(change: Partial<PartyView> = {}) {
     this.view = { ...this.view, ...change };
@@ -237,7 +268,7 @@ export class Party {
       return;
     }
     this.peer = host
-      ? new Peer(`tumble-club-v1-${this.view.code}`, { debug: 0 })
+      ? new Peer(`tumble-club-v2-${this.view.code}`, { debug: 0 })
       : new Peer({ debug: 0 });
     this.timer = setTimeout(
       () =>
@@ -248,6 +279,14 @@ export class Party {
     );
     this.peer.on('error', (err) => {
       const type = err.type;
+      if (this.view.status !== 'connecting') {
+        this.emit({
+          error:
+            'The room directory is reconnecting. Your room and existing racers stay together.',
+        });
+        this.reconnectDirectory();
+        return;
+      }
       this.fail(
         type === 'peer-unavailable'
           ? 'That room is not online. Ask your friend to create a room and share its new code.'
@@ -257,25 +296,33 @@ export class Party {
       );
     });
     this.peer.on('disconnected', () => {
-      if (!this.closed)
+      if (!this.closed) {
         this.emit({
           error:
-            'The room directory disconnected. Existing racers can continue; new friends may need a new room.',
+            'The room directory is reconnecting. Existing racers can continue.',
         });
+        this.reconnectDirectory();
+      }
     });
     this.peer.on('open', () => {
       if (this.closed) return;
+      if (this.view.status !== 'connecting') {
+        this.emit({ error: '' });
+        return;
+      }
       if (host) {
         this.clearTimer();
+        this.sim.reset(this.sim.course);
         this.view.self = 0;
         this.view.members = [
           { id: 0, name: cleanName(name), color, host: true },
         ];
         this.sim.setHumans([0]);
+        this.callbacks.prepare(this.sim.course);
         this.emit({ status: 'waiting' });
         this.callbacks.roster(this.view.members, 0);
       } else {
-        const c = this.peer!.connect(`tumble-club-v1-${this.view.code}`, {
+        const c = this.peer!.connect(`tumble-club-v2-${this.view.code}`, {
           reliable: true,
           serialization: 'json',
         });
@@ -285,7 +332,7 @@ export class Party {
             type: 'join',
             name: cleanName(name),
             color,
-            protocol: 1,
+            protocol: 2,
           }),
         );
         c.on('data', (data) => this.receiveHost(data));
@@ -316,21 +363,12 @@ export class Party {
         if (!data || typeof data !== 'object') return;
         const m = data as Record<string, unknown>;
         if (id < 0) {
-          if (m.type !== 'join' || m.protocol !== 1) {
+          if (m.type !== 'join' || m.protocol !== 2) {
             this.send(c, {
               type: 'error',
               message: 'Please reload the game before joining.',
             });
             c.close();
-            return;
-          }
-          if (this.view.status !== 'waiting') {
-            this.send(c, {
-              type: 'error',
-              message:
-                'This race has already started. Ask the host to return to the room first.',
-            });
-            setTimeout(() => c.close(), 150);
             return;
           }
           if (this.view.members.length >= 8) {
@@ -365,12 +403,38 @@ export class Party {
             code: this.view.code,
             members: this.view.members,
           });
+          this.send(c, {
+            type: 'pool',
+            recipes: this.view.customCourses,
+            rotation: this.view.rotation,
+          });
+          if (this.round > 0) {
+            this.send(c, this.roundPacket());
+            this.send(c, this.worldPacket());
+          }
           this.roster();
           return;
         }
         if (m.type === 'leave') {
           c.close();
           return;
+        }
+        if (m.type === 'submit-course') {
+          if (this.clock() - (this.submissionTimes.get(id) ?? -5000) < 1500) {
+            this.send(c, {
+              type: 'course-result',
+              message: 'Please wait a moment, then add the course again.',
+            });
+          } else {
+            this.submissionTimes.set(id, this.clock());
+            const accepted = this.addCourse(m.recipe);
+            this.send(c, {
+              type: 'course-result',
+              message: accepted
+                ? 'Your course is now in the room rotation.'
+                : 'The course was not added. The room holds 16 valid custom courses.',
+            });
+          }
         }
         if (m.type === 'input') {
           const now = performance.now();
@@ -409,6 +473,8 @@ export class Party {
           this.sim.humanInputs.delete(id);
           this.inputTimes.delete(id);
           this.inputSequences.delete(id);
+          this.respawnTimes.delete(id);
+          this.submissionTimes.delete(id);
           this.roster();
         }
       });
@@ -439,6 +505,61 @@ export class Party {
     if (this.closed) return;
     if (!data || typeof data !== 'object') return;
     const m = data as Record<string, unknown>;
+    if (m.type === 'course-result' && typeof m.message === 'string') {
+      this.emit({ courseMessage: m.message.slice(0, 160) });
+      return;
+    }
+    if (
+      m.type === 'pool' &&
+      Array.isArray(m.recipes) &&
+      m.recipes.length <= MAX_SAVED_COURSES &&
+      ['all', 'custom'].includes(String(m.rotation))
+    ) {
+      const recipes = m.recipes.map(parseRecipe);
+      if (recipes.every((r): r is CourseRecipe => r !== null))
+        this.emit({
+          customCourses: recipes,
+          rotation: m.rotation as 'all' | 'custom',
+        });
+      return;
+    }
+    if (
+      m.type === 'round' &&
+      Number.isSafeInteger(m.round) &&
+      Number(m.round) > this.round
+    ) {
+      const recipe = parseRecipe(m.recipe);
+      const course = recipe
+        ? buildCourse(recipe)
+        : Number.isInteger(m.course)
+          ? COURSES[Number(m.course)]
+          : null;
+      if (
+        !course ||
+        (m.recipe !== undefined && !recipe) ||
+        !['lobby', 'countdown', 'racing'].includes(String(m.state))
+      )
+        return;
+      this.round = Number(m.round);
+      this.lastSequence = -1;
+      this.pendingJump = this.pendingDive = false;
+      this.sim.reset(course);
+      this.sim.setHumans(
+        this.view.members.map((p) => p.id),
+        this.view.self,
+      );
+      this.sim.state = m.state as GameState;
+      this.callbacks.prepare(course);
+      this.callbacks.roster(this.view.members, this.view.self);
+      this.emit({
+        status: m.state === 'lobby' ? 'waiting' : 'racing',
+        round: this.round,
+        nextIn: 0,
+        nextName: '',
+        error: '',
+      });
+      return;
+    }
     if (m.type === 'error') {
       this.fail(
         typeof m.message === 'string'
@@ -457,11 +578,13 @@ export class Party {
       this.clearTimer();
       this.view.self = m.self;
       this.view.members = m.members;
+      this.sim.reset(this.sim.course);
       this.sim.setHumans(
         m.members.map((p) => p.id),
         m.self,
       );
       this.lastPacket = performance.now();
+      this.callbacks.prepare(this.sim.course);
       this.emit({ status: 'waiting' });
       this.callbacks.roster(this.view.members, this.view.self);
       return;
@@ -477,7 +600,9 @@ export class Party {
       m.type === 'lobby' &&
       Number.isInteger(m.course) &&
       Number(m.course) >= 0 &&
-      Number(m.course) < 10
+      Number(m.course) < COURSES.length &&
+      Number.isSafeInteger(m.round) &&
+      Number(m.round) > this.round
     ) {
       this.sim.reset(Number(m.course));
       this.sim.setHumans(
@@ -487,7 +612,7 @@ export class Party {
       this.round = Number(m.round);
       this.lastSequence = -1;
       this.emit({ status: 'waiting', round: this.round });
-      this.callbacks.prepare(Number(m.course));
+      this.callbacks.prepare(COURSES[Number(m.course)]);
       this.callbacks.roster(this.view.members, this.view.self);
       return;
     }
@@ -498,6 +623,7 @@ export class Party {
       )
         return;
       if (data.round !== this.round) {
+        if (!COURSES[data.course]) return;
         this.round = data.round;
         this.lastSequence = -1;
         this.sim.reset(data.course);
@@ -505,15 +631,25 @@ export class Party {
           this.view.members.map((p) => p.id),
           this.view.self,
         );
-        this.callbacks.prepare(data.course);
+        this.callbacks.prepare(COURSES[data.course]);
         this.callbacks.roster(this.view.members, this.view.self);
       }
+      if (data.course !== this.sim.course.id - 1) return;
       this.lastSequence = data.sequence;
       this.lastPacket = performance.now();
       restoreWorld(this.sim, data);
       const status = data.state === 'finished' ? 'finished' : 'racing';
-      if (this.view.status !== status)
-        this.emit({ status, round: this.round, error: '' });
+      const nextIn = Number.isFinite(data.nextIn)
+        ? Math.max(0, Math.min(5, Number(data.nextIn)))
+        : 0;
+      const nextName =
+        typeof data.nextName === 'string' ? data.nextName.slice(0, 36) : '';
+      if (
+        this.view.status !== status ||
+        this.view.nextIn !== nextIn ||
+        this.view.error
+      )
+        this.emit({ status, round: this.round, error: '', nextIn, nextName });
     }
   }
   roster() {
@@ -521,47 +657,97 @@ export class Party {
     this.broadcast({ type: 'roster', members: this.view.members });
     this.callbacks.roster(this.view.members, this.view.self);
   }
-  start(course: number) {
-    if (!this.view.host || this.view.members.length < 2 || !COURSES[course])
+  start(selection: number | Course, automatic = false) {
+    const course =
+      typeof selection === 'number' ? COURSES[selection] : selection;
+    if (
+      !this.view.host ||
+      (!automatic && this.view.members.length < 2) ||
+      !course
+    )
       return;
     this.round++;
     this.sequence = 0;
     this.lastBroadcast = 0;
     this.inputTimes.clear();
     this.inputSequences.clear();
+    this.respawnTimes.clear();
+    this.pendingJump = this.pendingDive = false;
+    this.nextCourse = null;
     this.sim.reset(course);
     this.sim.setHumans(this.view.members.map((p) => p.id));
     this.callbacks.prepare(course);
     this.callbacks.roster(this.view.members, 0);
     this.sim.start();
-    this.emit({ status: 'racing', round: this.round, error: '' });
-    this.broadcast(captureWorld(this.sim, this.round, ++this.sequence));
+    if (automatic) {
+      this.sim.state = 'racing';
+      this.sim.countdown = 0;
+      this.sim.events.push('go');
+    }
+    this.emit({
+      status: 'racing',
+      round: this.round,
+      error: '',
+      nextIn: 0,
+      nextName: '',
+    });
+    this.broadcast(this.roundPacket());
+    this.broadcast(this.worldPacket());
   }
   lobby(course: number) {
     if (!this.view.host) return;
     this.round++;
+    this.nextCourse = null;
     this.sim.reset(course);
     this.sim.setHumans(this.view.members.map((p) => p.id));
-    this.callbacks.prepare(course);
+    this.callbacks.prepare(COURSES[course]);
     this.callbacks.roster(this.view.members, 0);
-    this.emit({ status: 'waiting', round: this.round });
-    this.broadcast({ type: 'lobby', course, round: this.round });
+    this.emit({
+      status: 'waiting',
+      round: this.round,
+      nextIn: 0,
+      nextName: '',
+    });
+    this.broadcast(this.roundPacket());
   }
   tick(dt: number) {
     if (this.closed) return;
-    const now = performance.now();
+    const now = this.clock();
     if (this.view.host) {
       for (const [id, t] of this.inputTimes)
         if (now - t > 350) this.sim.humanInputs.set(id, { ...EMPTY_INPUT });
       this.sim.step(dt);
-      if (this.view.status === 'racing' && this.sim.state === 'finished')
-        this.emit({ status: 'finished' });
+      if (this.view.status === 'racing' && this.sim.state === 'finished') {
+        const customs = this.view.customCourses.map((r) => buildCourse(r));
+        const pool =
+          this.view.rotation === 'custom' && customs.length
+            ? customs
+            : [...COURSES, ...customs];
+        const choices = pool.filter((c) => c.id !== this.sim.course.id);
+        const available = choices.length ? choices : pool;
+        this.nextCourse =
+          available[Math.floor(Math.random() * available.length)];
+        this.intermissionEnd = now + 5000;
+        this.emit({
+          status: 'finished',
+          nextIn: 5,
+          nextName: this.nextCourse.name,
+        });
+      }
+      if (this.view.status === 'finished' && this.nextCourse) {
+        const remaining = Math.max(
+          0,
+          Math.ceil((this.intermissionEnd - now) / 1000),
+        );
+        if (remaining !== this.view.nextIn) this.emit({ nextIn: remaining });
+        if (now >= this.intermissionEnd) this.start(this.nextCourse, true);
+      }
       if (
         (this.view.status === 'racing' || this.view.status === 'finished') &&
         now - this.lastBroadcast >= 50
       ) {
         this.lastBroadcast = now;
-        this.broadcast(captureWorld(this.sim, this.round, ++this.sequence));
+        this.broadcast(this.worldPacket());
       }
     } else {
       this.pendingJump ||= this.sim.input.jump;
@@ -584,13 +770,19 @@ export class Party {
       }
       this.sim.input.jump = false;
       this.sim.input.dive = false;
-      if (this.view.status === 'racing' && now - this.lastPacket > 12000)
-        this.fail(
-          'The host stopped responding. Ask them to keep the game tab active, then create a new room.',
-        );
+      if (
+        this.view.status === 'racing' &&
+        now - this.lastPacket > 12000 &&
+        !this.view.error
+      )
+        this.emit({
+          error:
+            'Waiting for the host to return to the game tab. Your room is still open.',
+        });
     }
   }
   respawn() {
+    if (this.sim.state !== 'racing' || this.sim.player.finished) return;
     if (this.view.host) this.sim.respawn(this.sim.player);
     else if (this.server)
       this.send(this.server, { type: 'respawn', round: this.round });
@@ -607,7 +799,9 @@ export class Party {
         (c.dataChannel?.bufferedAmount ?? 0) < 128000)
     ) {
       try {
-        c.send(data);
+        void Promise.resolve(c.send(data)).catch(() => {
+          /* The connection's close/error event handles a failed send. */
+        });
       } catch {
         /* The close/error event handles a disconnected player. */
       }
@@ -615,6 +809,71 @@ export class Party {
   }
   broadcast(data: unknown) {
     for (const c of this.connections.values()) this.send(c, data);
+  }
+  roundPacket() {
+    return {
+      type: 'round',
+      round: this.round,
+      course: this.sim.course.recipe ? -1 : this.sim.course.id - 1,
+      recipe: this.sim.course.recipe,
+      state: this.sim.state === 'finished' ? 'racing' : this.sim.state,
+    };
+  }
+  worldPacket() {
+    return {
+      ...captureWorld(this.sim, this.round, ++this.sequence),
+      nextIn: this.view.nextIn,
+      nextName: this.view.nextName,
+    };
+  }
+  addCourse(value: unknown) {
+    const recipe = parseRecipe(value);
+    if (!recipe || this.closed) return false;
+    if (!this.view.host) {
+      if (
+        !this.server?.open ||
+        this.view.customCourses.length >= MAX_SAVED_COURSES
+      )
+        return false;
+      this.emit({ courseMessage: 'Sharing your course with the room…' });
+      this.send(this.server, { type: 'submit-course', recipe });
+      return true;
+    }
+    if (this.view.customCourses.some((r) => recipeKey(r) === recipeKey(recipe)))
+      return true;
+    if (this.view.customCourses.length >= MAX_SAVED_COURSES) return false;
+    this.emit({
+      customCourses: [...this.view.customCourses, recipe],
+      courseMessage: 'Course added to the room rotation.',
+    });
+    this.broadcast({
+      type: 'pool',
+      recipes: this.view.customCourses,
+      rotation: this.view.rotation,
+    });
+    return true;
+  }
+  setRotation(rotation: 'all' | 'custom') {
+    if (!this.view.host) return;
+    this.emit({ rotation });
+    this.broadcast({
+      type: 'pool',
+      recipes: this.view.customCourses,
+      rotation,
+    });
+  }
+  reconnectDirectory() {
+    if (this.closed || this.reconnectTimer) return;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (!this.closed && this.peer?.disconnected && !this.peer.destroyed) {
+        try {
+          this.peer.reconnect();
+        } catch {
+          this.reconnectDirectory();
+        }
+      }
+    }, 2000);
   }
   clearTimer() {
     if (this.timer) clearTimeout(this.timer);
@@ -628,6 +887,8 @@ export class Party {
   }
   close(notify = true) {
     this.closed = true;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.nextCourse = null;
     this.clearTimer();
     for (const c of this.connections.values()) c.close();
     this.connections.clear();

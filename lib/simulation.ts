@@ -1,4 +1,5 @@
 import { COURSES, type Course, type Obstacle } from './courses.ts';
+import { platformHeight } from './course-builder.ts';
 
 export type Input = { x: number; z: number; jump: boolean; dive: boolean };
 export type Racer = {
@@ -22,6 +23,7 @@ export type Racer = {
   speed: number;
   lastJump: number;
   finishTime: number;
+  sliding: boolean;
 };
 export type GameState = 'lobby' | 'countdown' | 'racing' | 'finished';
 export const EMPTY_INPUT: Input = { x: 0, z: 0, jump: false, dive: false };
@@ -30,6 +32,27 @@ export const clamp = (v: number, a: number, b: number) =>
 
 export function obstaclePose(o: Obstacle, t: number) {
   const phase = t * (o.speed ?? 1) + (o.phase ?? 0);
+  const base = o.y ?? 0;
+  if (o.type === 'falling') {
+    const cycle = ((phase % 3.6) + 3.6) % 3.6;
+    return {
+      x: o.x,
+      y:
+        base + (cycle < 1.6 ? 12 : cycle < 2.6 ? 12 * (1 - (cycle - 1.6)) : -4),
+      z: o.z,
+      angle: phase,
+      warning: cycle < 2.6,
+    };
+  }
+  if (o.type === 'hammer') {
+    const a = Math.sin(phase) * 1.12;
+    return {
+      x: o.x + Math.sin(a) * 5.5,
+      y: base + 6.2 - Math.cos(a) * 5.5,
+      z: o.z,
+      angle: a,
+    };
+  }
   if (o.type === 'bumper')
     return { x: o.x + Math.sin(phase) * 3.8, y: 1, z: o.z, angle: 0 };
   if (o.type === 'pendulum') {
@@ -62,16 +85,17 @@ export class Simulation {
   events: string[] = [];
   paused = false;
   input: Input = { ...EMPTY_INPUT };
-  constructor(index = 0) {
-    this.course = COURSES[index];
+  constructor(index: number | Course = 0) {
+    this.course = typeof index === 'number' ? COURSES[index] : index;
     this.reset(index);
   }
-  reset(index: number) {
+  reset(index: number | Course) {
     this.playerId = 0;
     this.multiplayer = false;
     this.humanIds.clear();
     this.humanInputs.clear();
-    this.course = COURSES[index];
+    this.course =
+      typeof index === 'number' ? (COURSES[index] ?? COURSES[0]) : index;
     this.state = 'lobby';
     this.time = 0;
     this.countdown = 3;
@@ -102,6 +126,7 @@ export class Simulation {
       speed: id === 0 ? 10 : 7.7 + (id % 5) * 0.33,
       lastJump: -2,
       finishTime: 0,
+      sliding: false,
     }));
   }
   start() {
@@ -128,17 +153,28 @@ export class Simulation {
         ).length
     );
   }
-  support(x: number, z: number) {
-    return this.course.platforms.findIndex(
-      (p, i) =>
+  support(x: number, z: number, maxY = Infinity) {
+    let result = -1,
+      highest = -Infinity;
+    this.course.platforms.forEach((p, i) => {
+      const h = platformHeight(p, z),
+        age = this.worldTime - (this.tiles.get(i) ?? Infinity);
+      if (
         Math.abs(x - p.x) <= p.w / 2 + 0.08 &&
         Math.abs(z - p.z) <= p.d / 2 + 0.08 &&
-        !(
-          this.tiles.has(i) &&
-          this.worldTime - this.tiles.get(i)! > 0.7 &&
-          this.worldTime - this.tiles.get(i)! < 3.4
-        ),
-    );
+        !(age > 0.7 && age < 3.4) &&
+        h <= maxY + 0.12 &&
+        h > highest
+      ) {
+        result = i;
+        highest = h;
+      }
+    });
+    return result;
+  }
+  height(x: number, z: number) {
+    const i = this.support(x, z);
+    return i < 0 ? -Infinity : platformHeight(this.course.platforms[i], z);
   }
   botInput(r: Racer): Input {
     let target = ((r.id % 5) - 2) * 1.2;
@@ -148,13 +184,24 @@ export class Simulation {
     if (next)
       target = clamp(target, next.x - next.w / 2 + 1, next.x + next.w / 2 - 1);
     let jump = this.support(r.x, r.z + 2.4) < 0;
+    const aheadSupport = this.support(r.x, r.z + 2.2);
+    if (
+      aheadSupport >= 0 &&
+      this.course.platforms[aheadSupport].endY === undefined &&
+      this.height(r.x, r.z + 2.2) > r.y + 0.5
+    )
+      jump = true;
     for (const o of this.course.obstacles) {
       const p = obstaclePose(o, this.worldTime);
       const dist = o.z - r.z;
       if (
         dist > -3.2 &&
         dist < 7 &&
-        (o.type === 'bumper' || o.type === 'pendulum' || o.type === 'pusher')
+        (o.type === 'bumper' ||
+          o.type === 'pendulum' ||
+          o.type === 'pusher' ||
+          o.type === 'hammer' ||
+          o.type === 'falling')
       )
         target = clamp(p.x + (r.x < p.x ? -3.6 : 3.6), -5.5, 5.5);
       if (o.type === 'hurdle' && dist > 0 && dist < 2.9) jump = true;
@@ -239,24 +286,56 @@ export class Simulation {
       if (r.id === this.playerId) this.events.push('dive');
     }
     const len = Math.max(1, Math.hypot(input.x, input.z));
-    const accel = r.grounded ? 36 : 20;
+    const accel = r.sliding ? 9 : r.grounded ? 36 : 20;
     const factor = r.stun > 0 ? 0.12 : r.diveTime > 0 ? 0.25 : 1;
     const tx = (input.x / len) * r.speed,
       tz = (input.z / len) * r.speed;
     r.vx += clamp(tx - r.vx, -accel * dt, accel * dt) * factor;
     r.vz += clamp(tz - r.vz, -accel * dt, accel * dt) * factor;
-    const prevY = r.y;
+    const prevY = r.y,
+      prevX = r.x,
+      prevZ = r.z,
+      wasGrounded = r.grounded;
     r.vy -= 26 * dt;
     r.x += r.vx * dt;
     r.z += r.vz * dt;
     r.y += r.vy * dt;
-    const support = this.support(r.x, r.z);
-    if (support >= 0 && r.y <= 0 && prevY >= -0.08 && r.vy <= 0) {
-      r.y = 0;
+    // Solid ledge faces require a jump; gradual ramps can be walked up.
+    for (const p of this.course.platforms) {
+      if (Math.abs(r.x - p.x) > p.w / 2 || Math.abs(r.z - p.z) > p.d / 2)
+        continue;
+      if (platformHeight(p, r.z) <= Math.max(prevY, r.y) + 0.35) continue;
+      if (Math.abs(prevZ - p.z) >= p.d / 2) {
+        r.z = prevZ;
+        r.vz = 0;
+      }
+      if (Math.abs(prevX - p.x) >= p.w / 2) {
+        r.x = prevX;
+        r.vx = 0;
+      }
+    }
+    const support = this.support(r.x, r.z, Math.max(prevY, r.y) + 0.3);
+    const floor =
+      support >= 0
+        ? platformHeight(this.course.platforms[support], r.z)
+        : -Infinity;
+    r.sliding = false;
+    if (
+      support >= 0 &&
+      r.y <= floor + (wasGrounded ? 0.32 : 0) &&
+      prevY >= floor - 0.4 &&
+      r.vy <= 0
+    ) {
+      r.y = floor;
       r.vy = 0;
       r.grounded = true;
       r.dived = false;
       const p = this.course.platforms[support];
+      if (p.kind === 'slide') {
+        r.sliding = true;
+        r.vz = Math.min(19, r.vz + 34 * dt);
+        r.z += 4 * dt;
+      }
       if (p.kind === 'belt') r.x += (p.direction ?? 1) * 3 * dt;
       if (p.kind === 'crumble' && !this.tiles.has(support))
         this.tiles.set(support, this.worldTime);
@@ -277,7 +356,12 @@ export class Simulation {
           r.checkpoint = cp;
           if (r.id === this.playerId) this.events.push('checkpoint');
         }
-    if (r.z >= this.course.length && r.y >= 0 && r.y < 2.5 && support >= 0) {
+    if (
+      r.z >= this.course.length &&
+      r.y >= floor &&
+      r.y < floor + 2.5 &&
+      support >= 0
+    ) {
       r.finished = this.finishOrder.length + 1;
       r.finishTime = this.time;
       this.finishOrder.push(r.id);
@@ -343,6 +427,8 @@ export class Simulation {
     r.stun = 0;
     r.diveTime = 0;
     r.dived = false;
+    r.sliding = false;
+    r.y = Math.max(0, this.height(r.x, r.z)) + 1;
     r.falls++;
     if (r.id === this.playerId) this.events.push('fall');
   }

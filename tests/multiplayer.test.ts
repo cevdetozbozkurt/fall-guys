@@ -11,6 +11,7 @@ import {
   type Member,
 } from '../lib/multiplayer.ts';
 import type { DataConnection } from 'peerjs';
+import { COURSES } from '../lib/courses.ts';
 const callbacks = {
   change: () => {},
   prepare: () => {},
@@ -115,7 +116,7 @@ void test('congested links retain control packets while old world snapshots can 
   assert.equal(sent.length, 2);
 });
 void test('two human inputs can finish every course with the shared physics', () => {
-  for (let course = 0; course < 10; course++) {
+  for (let course = 0; course < COURSES.length; course++) {
     const s = new Simulation(course);
     s.setHumans([0, 1]);
     s.start();

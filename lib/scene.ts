@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { COLORS } from './courses';
+import { platformHeight, MODULES } from './course-builder';
 import { Simulation, obstaclePose } from './simulation';
 
 // The scene is the playable course: all obstacle transforms share the physics model.
@@ -13,6 +14,7 @@ export class RaceScene {
   obstacles: THREE.Group[] = [];
   platforms: THREE.Mesh[] = [];
   particles: THREE.Mesh[] = [];
+  warnings: THREE.Mesh[] = [];
   sim: Simulation;
   observer: ResizeObserver;
   look = new THREE.Vector3();
@@ -26,7 +28,7 @@ export class RaceScene {
     this.playerColor = color;
     this.renderer = new THREE.WebGLRenderer({
       antialias: true,
-      alpha: false,
+      alpha: true,
       powerPreference: 'high-performance',
     });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.7));
@@ -34,14 +36,14 @@ export class RaceScene {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.28;
+    this.renderer.toneMappingExposure = 1.12;
     this.renderer.domElement.setAttribute(
       'aria-label',
       '3D obstacle race course',
     );
     container.appendChild(this.renderer.domElement);
-    this.scene.add(new THREE.HemisphereLight(0xffffff, 0x9182ba, 2.5));
-    const light = new THREE.DirectionalLight(0xfff4e1, 3.5);
+    this.scene.add(new THREE.HemisphereLight(0xa8daff, 0x411570, 2.8));
+    const light = new THREE.DirectionalLight(0xcceeff, 3.2);
     light.position.set(-25, 55, 15);
     light.castShadow = true;
     light.shadow.mapSize.set(2048, 2048);
@@ -64,7 +66,9 @@ export class RaceScene {
     return new THREE.MeshStandardMaterial({
       color,
       roughness,
-      metalness: 0.02,
+      metalness: 0.25,
+      emissive: color,
+      emissiveIntensity: 0.09,
     });
   }
   box(
@@ -153,10 +157,11 @@ export class RaceScene {
     const head = this.sphere(0.58, color, 0, 1.75, 0);
     head.scale.set(1, 0.9, 0.85);
     g.add(head);
-    const visor = this.box(0.76, 0.37, 0.17, '#fff9e9', 0, 1.72, -0.43, 0.16);
+    const visor = this.box(0.87, 0.41, 0.19, '#131f49', 0, 1.72, -0.43, 0.16);
     g.add(visor);
     for (const x of [-0.19, 0.19])
-      g.add(this.box(0.09, 0.15, 0.045, '#34254f', x, 1.72, -0.535, 0.04));
+      g.add(this.box(0.1, 0.14, 0.045, '#72fff1', x, 1.72, -0.54, 0.04));
+    g.add(this.box(0.8, 0.65, 0.3, '#26315e', 0, 1.1, 0.48, 0.1));
     // Small antenna and contrasting sneakers distinguish these original toy racers.
     g.add(
       this.cylinder(0.065, 0.25, '#34254f', 0, 2.31, 0),
@@ -197,64 +202,96 @@ export class RaceScene {
   build() {
     this.clearWorld();
     const c = this.sim.course;
-    this.scene.background = new THREE.Color(c.sky);
-    this.scene.fog = new THREE.Fog(c.sky, 105, 235);
-    const ground = this.box(550, 2, 550, c.sky, 0, -14, -70, 0);
-    ground.castShadow = false;
-    this.world.add(ground);
-    for (let i = 0; i < 28; i++) {
+    this.scene.background = null;
+    this.scene.fog = new THREE.Fog('#080f28', 95, 225);
+    for (let i = 0; i < 24; i++) {
       const side = i % 2 ? -1 : 1,
         x = side * (19 + ((i * 11) % 38)),
         z = 15 - i * 6.3;
-      const cloud = new THREE.Group();
+      const island = new THREE.Group();
+      const base = this.cylinder(3 + (i % 3), 0.6, '#173d5d', 0, -1, 0);
+      island.add(base);
       for (let n = 0; n < 3; n++) {
-        const puff = this.sphere(2 + (n % 2) * 1.3, '#f5ffff', n * 2.2, 0, 0);
-        puff.scale.y = 0.42;
-        puff.castShadow = false;
-        cloud.add(puff);
+        const crystal = new THREE.Mesh(
+          new THREE.OctahedronGeometry(1.1 + n * 0.4),
+          this.material(n % 2 ? '#e068e4' : '#43e6e3'),
+        );
+        crystal.position.set(n * 1.4 - 1.4, n * 0.6, 0);
+        crystal.scale.y = 2;
+        island.add(crystal);
       }
-      cloud.position.set(x, -6 + (i % 3) * 1.5, z);
-      this.world.add(cloud);
+      island.position.set(x, -6 + (i % 3) * 2, z);
+      island.rotation.y = i;
+      this.world.add(island);
     }
     for (const p of c.platforms) {
       const color =
         p.kind === 'crumble'
-          ? '#f49db7'
+          ? '#c94fba'
           : p.kind === 'belt'
-            ? '#7ecbb6'
-            : c.color;
-      const platform = this.box(p.w, 0.85, p.d, color, p.x, -0.46, -p.z, 0.18);
+            ? '#1a959a'
+            : p.kind === 'slide'
+              ? '#176a9e'
+              : c.color;
+      const rise = (p.endY ?? p.y ?? 0) - (p.y ?? 0);
+      const platform = this.box(
+        p.w,
+        0.85,
+        Math.hypot(p.d, rise),
+        color,
+        p.x,
+        platformHeight(p, p.z) - 0.46,
+        -p.z,
+        0.12,
+      );
+      platform.rotation.x = Math.atan2(rise, p.d);
       this.world.add(platform);
       this.platforms.push(platform);
       if (p.kind !== 'crumble') {
-        for (const side of [-1, 1])
-          this.world.add(
-            this.box(
-              0.22,
-              0.18,
-              p.d - 0.2,
-              '#f5d888',
-              p.x + side * (p.w / 2 - 0.18),
-              0.04,
-              -p.z,
-              0.05,
-            ),
+        for (const side of [-1, 1]) {
+          const rail = this.box(
+            0.22,
+            0.18,
+            Math.hypot(p.d, rise) - 0.2,
+            c.accent,
+            p.x + side * (p.w / 2 - 0.18),
+            platformHeight(p, p.z) + 0.04,
+            -p.z,
+            0.05,
           );
+          rail.rotation.x = platform.rotation.x;
+          (rail.material as THREE.MeshStandardMaterial).emissiveIntensity = 1.1;
+          this.world.add(rail);
+        }
         for (let z = p.z - p.d / 2 + 3; z < p.z + p.d / 2; z += 6) {
-          const stripe = this.box(0.13, 0.015, 2, '#ffffff', p.x, 0.01, -z, 0);
+          const stripe = this.box(
+            0.13,
+            0.015,
+            2,
+            '#8bf8ff',
+            p.x,
+            platformHeight(p, z) + 0.03,
+            -z,
+            0,
+          );
+          stripe.rotation.x = platform.rotation.x;
           (stripe.material as THREE.MeshStandardMaterial).transparent = true;
           (stripe.material as THREE.MeshStandardMaterial).opacity = 0.45;
           this.world.add(stripe);
-          if (p.kind === 'belt')
+          if (p.kind === 'belt' || p.kind === 'slide')
             for (const x of [-5, -2, 2, 5]) {
               const arrow = this.label(
-                p.direction === 1 ? '›' : '‹',
-                '#247e68',
+                p.kind === 'slide' ? '»' : p.direction === 1 ? '›' : '‹',
+                '#9cfff2',
               );
               arrow.scale.set(0.25, 0.8, 1);
-              arrow.rotation.x = -Math.PI / 2;
-              arrow.rotation.z = Math.PI / 2;
-              arrow.position.set(x, 0.015, -z);
+              arrow.rotation.x = -Math.PI / 2 + platform.rotation.x;
+              arrow.rotation.z = p.kind === 'slide' ? 0 : Math.PI / 2;
+              arrow.position.set(
+                x * Math.min(1, p.w / 13),
+                platformHeight(p, z) + 0.05,
+                -z,
+              );
               this.world.add(arrow);
             }
         }
@@ -274,7 +311,7 @@ export class RaceScene {
     }
     for (const z of this.sim.course.checkpoints)
       this.arch(z, '#9ddeab', 'CHECKPOINT', false);
-    this.arch(c.length, '#ffd271', 'FINISH', true);
+    this.arch(c.length, '#ff5ed5', 'DATA VORTEX', true);
     for (let i = 0; i < 16; i++) {
       const square = this.box(
         1,
@@ -322,6 +359,42 @@ export class RaceScene {
           this.cylinder((o.radius ?? 1.5) + 0.1, 0.35, '#fff4d6', 0, 1, 0),
         );
         g.add(this.sphere((o.radius ?? 1.5) * 0.95, c.accent, 0, 1.82, 0));
+      } else if (o.type === 'hammer') {
+        this.world.add(this.box(17, 0.35, 0.35, '#1ccdcf', o.x, 6.5, -o.z));
+        for (const x of [-8, 8])
+          this.world.add(this.box(0.3, 6.6, 0.3, '#354c86', o.x + x, 3, -o.z));
+        g.add(this.box(3.1, 1.5, 1.8, '#ff69c9', 0, 0, 0, 0.2));
+        g.add(
+          this.box(0.4, 1.6, 1.9, '#83fff0', -1.3, 0, 0),
+          this.box(0.4, 1.6, 1.9, '#83fff0', 1.3, 0, 0),
+        );
+        const handle = this.cylinder(0.13, 5.5, '#b8a5ff', 0, 2.75, 0);
+        handle.name = 'hammer-handle';
+        g.add(handle);
+      } else if (o.type === 'falling') {
+        const meteor = new THREE.Mesh(
+          new THREE.IcosahedronGeometry(o.radius ?? 1.25, 0),
+          this.material('#ff8b58'),
+        );
+        g.add(meteor);
+        const warning = new THREE.Mesh(
+          new THREE.RingGeometry(
+            (o.radius ?? 1.25) + 0.2,
+            (o.radius ?? 1.25) + 0.48,
+            32,
+          ),
+          new THREE.MeshBasicMaterial({
+            color: '#ff6788',
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.8,
+          }),
+        );
+        warning.rotation.x = -Math.PI / 2;
+        warning.position.set(o.x, 0.06, -o.z);
+        warning.userData.obstacle = this.obstacles.length;
+        this.world.add(warning);
+        this.warnings.push(warning);
       } else if (o.type === 'pendulum') {
         for (const x of [-8, 8])
           this.world.add(this.box(0.35, 9, 0.35, '#8e7dbb', x, 4.1, -o.z));
@@ -345,7 +418,11 @@ export class RaceScene {
             0.22,
           ),
         );
-      g.position.set(p.x, o.type === 'pendulum' ? p.y : 0, -p.z);
+      g.position.set(
+        p.x,
+        ['pendulum', 'hammer', 'falling'].includes(o.type) ? p.y : (o.y ?? 0),
+        -p.z,
+      );
       this.world.add(g);
       this.obstacles.push(g);
     }
@@ -366,7 +443,7 @@ export class RaceScene {
     for (let i = 0; i < 6; i++) {
       const ring = new THREE.Mesh(
         new THREE.TorusGeometry(2.7, 0.22, 12, 40),
-        this.material(i % 2 ? c.accent : '#f4ca60'),
+        this.material(i % 2 ? c.accent : '#47e8f4'),
       );
       ring.position.set(
         (i % 2 ? -1 : 1) * (13 + (i % 3) * 3),
@@ -375,6 +452,27 @@ export class RaceScene {
       );
       ring.rotation.y = (i % 2 ? 1 : -1) * 0.4;
       this.world.add(ring);
+      (ring.material as THREE.MeshStandardMaterial).emissiveIntensity = 1.4;
+    }
+    const recipe = c.recipe;
+    for (const [i, z] of c.checkpoints.entries()) {
+      const sign = this.label(
+        recipe
+          ? (MODULES.find(
+              (m) => m.key === recipe.segments[i]?.type,
+            )?.name.toUpperCase() ?? 'NEXT SECTOR')
+          : i % 2
+            ? 'COSMIC RUN'
+            : c.name.toUpperCase(),
+        '#6dfbee',
+        '#132142',
+      );
+      sign.position.set(i % 2 ? 11 : -11, 5.7, -z);
+      sign.rotation.y = i % 2 ? -0.3 : 0.3;
+      this.world.add(
+        sign,
+        this.box(0.2, 5, 0.2, '#67e0e8', sign.position.x, 2.5, -z),
+      );
     }
     this.camera.position.set(34, 31, 33);
     this.look.set(0, 0, -23);
@@ -407,7 +505,7 @@ export class RaceScene {
       ),
     );
     if (finish) {
-      const l = this.label(text, '#403052');
+      const l = this.label(text, '#ffffff');
       l.position.set(0, 5.5, -z + 0.38);
       this.world.add(l);
     } else {
@@ -445,7 +543,7 @@ export class RaceScene {
       );
       char.position.set(racer.x, racer.y, -racer.z);
       if (member) {
-        const name = this.label(member.name, '#44305d', '#fff7df');
+        const name = this.label(member.name, '#e4faff', '#142341');
         name.scale.set(0.35, 0.35, 1);
         name.position.set(0, 2.9, 0);
         name.name = 'nameplate';
@@ -471,7 +569,24 @@ export class RaceScene {
       const o = s.course.obstacles[i],
         p = obstaclePose(o, t),
         g = this.obstacles[i];
-      g.position.set(p.x, o.type === 'pendulum' ? p.y : 0, -p.z);
+      g.position.set(
+        p.x,
+        ['pendulum', 'hammer', 'falling'].includes(o.type) ? p.y : (o.y ?? 0),
+        -p.z,
+      );
+      if (o.type === 'falling') {
+        g.rotation.set(t * 0.8, t * 1.2, t * 0.4);
+        g.visible = p.y > -2;
+      }
+      if (o.type === 'hammer') {
+        const handle = g.getObjectByName('hammer-handle')!;
+        handle.rotation.z = p.angle;
+        handle.position.set(
+          -Math.sin(p.angle) * 2.75,
+          Math.cos(p.angle) * 2.75,
+          0,
+        );
+      }
       if (o.type === 'bar') g.rotation.y = p.angle;
       if (o.type === 'pendulum') {
         const rope = g.getObjectByName('rope')!;
@@ -479,13 +594,21 @@ export class RaceScene {
         rope.position.set(-Math.sin(p.angle) * 3.5, Math.cos(p.angle) * 3.5, 0);
       }
     }
+    for (const warning of this.warnings) {
+      const p = obstaclePose(s.course.obstacles[warning.userData.obstacle], t);
+      warning.visible = !!p.warning;
+      (warning.material as THREE.MeshBasicMaterial).opacity =
+        p.y < 8 ? 0.95 : 0.35 + Math.sin(t * 7) * 0.2;
+    }
     for (let i = 0; i < this.platforms.length; i++) {
       const mesh = this.platforms[i],
         start = s.tiles.get(i),
         age = start === undefined ? 0 : t - start;
       mesh.visible = age < 0.7 || age >= 3.4;
       mesh.position.y =
-        age > 0 && age < 0.7 ? -0.46 + Math.sin(age * 65) * 0.05 : -0.46;
+        platformHeight(s.course.platforms[i], s.course.platforms[i].z) -
+        0.46 +
+        (age > 0 && age < 0.7 ? Math.sin(age * 65) * 0.05 : 0);
     }
     for (const r of s.racers) {
       const g = this.characters[r.id];
@@ -519,7 +642,13 @@ export class RaceScene {
         );
       else if (lobby) g.rotation.y = Math.PI - 0.5;
       g.rotation.x =
-        r.diveTime > 0 ? -1.1 : r.stun > 0 ? Math.sin(t * 25) * 0.3 : 0;
+        r.diveTime > 0
+          ? -1.1
+          : r.sliding
+            ? -0.6
+            : r.stun > 0
+              ? Math.sin(t * 25) * 0.3
+              : 0;
       g.rotation.z = r.stun > 0 ? Math.cos(t * 25) * 0.3 : 0;
       for (const side of [-1, 1]) {
         g.getObjectByName(`foot${side}`)!.position.z =
@@ -544,11 +673,11 @@ export class RaceScene {
     } else {
       const r = s.player;
       this.camera.position.lerp(
-        new THREE.Vector3(r.x * 0.55, 14 + Math.max(0, r.y) * 0.25, -r.z + 20),
+        new THREE.Vector3(r.x * 0.55, 14 + Math.max(0, r.y) * 0.85, -r.z + 20),
         Math.min(1, dt * 5),
       );
       this.look.lerp(
-        new THREE.Vector3(r.x * 0.45, 1, -r.z - 9),
+        new THREE.Vector3(r.x * 0.45, 1 + Math.max(0, r.y) * 0.7, -r.z - 9),
         Math.min(1, dt * 6),
       );
     }
@@ -601,6 +730,7 @@ export class RaceScene {
     this.obstacles = [];
     this.platforms = [];
     this.particles = [];
+    this.warnings = [];
   }
   destroy() {
     this.disposed = true;

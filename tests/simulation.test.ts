@@ -3,10 +3,10 @@ import { test } from 'node:test';
 import { COURSES } from '../lib/courses.ts';
 import { Simulation, EMPTY_INPUT } from '../lib/simulation.ts';
 
-void test('ten distinct courses have supported start, checkpoints and finish', () => {
-  assert.equal(COURSES.length, 10);
-  assert.equal(new Set(COURSES.map((c) => c.name)).size, 10);
-  for (let i = 0; i < 10; i++) {
+void test('thirty distinct courses have supported start, checkpoints and finish', () => {
+  assert.equal(COURSES.length, 30);
+  assert.equal(new Set(COURSES.map((c) => c.name)).size, 30);
+  for (let i = 0; i < COURSES.length; i++) {
     const s = new Simulation(i);
     for (const z of [1, ...s.course.checkpoints, s.course.length])
       assert.ok(
@@ -15,9 +15,9 @@ void test('ten distinct courses have supported start, checkpoints and finish', (
       );
   }
 });
-void test('all ten courses can be completed under shared racing physics', () => {
+void test('all thirty courses can be completed under shared racing physics', () => {
   const outcomes = [];
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < COURSES.length; i++) {
     const s = new Simulation(i);
     s.start();
     for (
