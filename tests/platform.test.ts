@@ -186,7 +186,7 @@ void test('five public players validate tickets, retry start, remove departed gu
   peer.emit('connection', early);
   early.emit('data', {
     type: 'join',
-    protocol: 3,
+    protocol: 4,
     userId: 'u1',
     matchId: 'match',
     ticket: 'ticket1',
@@ -210,7 +210,7 @@ void test('five public players validate tickets, retry start, remove departed gu
   peer.emit('connection', forged);
   forged.emit('data', {
     type: 'join',
-    protocol: 3,
+    protocol: 4,
     userId: 'u2',
     matchId: 'match',
     ticket: 'forged',
@@ -224,7 +224,7 @@ void test('five public players validate tickets, retry start, remove departed gu
     peer.emit('connection', c);
     c.emit('data', {
       type: 'join',
-      protocol: 3,
+      protocol: 4,
       userId: `u${id}`,
       matchId: 'match',
       ticket: `ticket${id}`,

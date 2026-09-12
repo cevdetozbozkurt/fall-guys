@@ -1,8 +1,15 @@
 import { COURSES, type Course, type Obstacle } from './courses.ts';
 import { platformHeight } from './course-builder.ts';
 import { toLocal, toWorld, routeAt, projectRoute } from './routes.ts';
+import { nearbyPlatforms } from './platform-grid.ts';
 
-export type Input = { x: number; z: number; jump: boolean; dive: boolean };
+export type Input = {
+  x: number;
+  z: number;
+  jump: boolean;
+  dive: boolean;
+  kick?: boolean;
+};
 export type Racer = {
   id: number;
   x: number;
@@ -20,6 +27,9 @@ export type Racer = {
   invincible: number;
   stun: number;
   diveTime: number;
+  diveCooldown: number;
+  kickCooldown: number;
+  kickTime: number;
   dived: boolean;
   finished: number;
   falls: number;
@@ -29,7 +39,14 @@ export type Racer = {
   sliding: boolean;
 };
 export type GameState = 'lobby' | 'countdown' | 'racing' | 'finished';
-export const EMPTY_INPUT: Input = { x: 0, z: 0, jump: false, dive: false };
+export const EMPTY_INPUT: Input = {
+  x: 0,
+  z: 0,
+  jump: false,
+  dive: false,
+  kick: false,
+};
+export const ABILITY_COOLDOWN = 5;
 export const clamp = (v: number, a: number, b: number) =>
   Math.max(a, Math.min(b, v));
 
@@ -134,6 +151,9 @@ export class Simulation {
       invincible: 1,
       stun: 0,
       diveTime: 0,
+      diveCooldown: 0,
+      kickCooldown: 0,
+      kickTime: 0,
       dived: false,
       finished: 0,
       falls: 0,
@@ -171,7 +191,8 @@ export class Simulation {
   support(x: number, z: number, maxY = Infinity) {
     let result = -1,
       highest = -Infinity;
-    this.course.platforms.forEach((p, i) => {
+    for (const i of nearbyPlatforms(this.course.platforms, x, z)) {
+      const p = this.course.platforms[i];
       const local = toLocal(p, x, z);
       const h = platformHeight(p, z, x),
         age = this.worldTime - (this.tiles.get(i) ?? Infinity);
@@ -185,7 +206,7 @@ export class Simulation {
         result = i;
         highest = h;
       }
-    });
+    }
     return result;
   }
   height(x: number, z: number) {
@@ -280,10 +301,16 @@ export class Simulation {
             : this.botInput(r);
       this.move(r, input, dt);
       if (this.humanInputs.has(r.id))
-        this.humanInputs.set(r.id, { ...input, jump: false, dive: false });
+        this.humanInputs.set(r.id, {
+          ...input,
+          jump: false,
+          dive: false,
+          kick: false,
+        });
     }
     this.input.jump = false;
     this.input.dive = false;
+    this.input.kick = false;
     if (
       this.multiplayer &&
       [...this.humanIds].every((id) => this.racers[id].finished > 0)
@@ -295,12 +322,15 @@ export class Simulation {
     }
   }
   move(r: Racer, input: Input, dt: number) {
+    r.diveCooldown = Math.max(0, r.diveCooldown - dt);
+    r.kickCooldown = Math.max(0, r.kickCooldown - dt);
+    r.kickTime = Math.max(0, r.kickTime - dt);
     r.invincible = Math.max(0, r.invincible - dt);
     r.stun = Math.max(0, r.stun - dt);
     r.diveTime = Math.max(0, r.diveTime - dt);
     r.coyote = r.grounded ? 0.1 : Math.max(0, r.coyote - dt);
     r.jumpBuffer = input.jump ? 0.12 : Math.max(0, r.jumpBuffer - dt);
-    if (r.jumpBuffer > 0 && r.coyote > 0) {
+    if (r.jumpBuffer > 0 && r.coyote > 0 && r.stun <= 0) {
       r.vy = 10.7;
       r.grounded = false;
       r.coyote = 0;
@@ -308,7 +338,15 @@ export class Simulation {
       r.lastJump = this.worldTime;
       if (r.id === this.playerId) this.events.push('jump');
     }
-    if (input.dive && !r.grounded && !r.dived && r.y > 0) {
+    if (input.kick) this.kick(r, input);
+    if (
+      input.dive &&
+      r.diveCooldown <= 0 &&
+      r.stun <= 0 &&
+      !r.grounded &&
+      !r.dived &&
+      r.y > 0
+    ) {
       const direction =
         Math.hypot(input.x, input.z) > 0
           ? input
@@ -329,6 +367,7 @@ export class Simulation {
       r.vy = Math.max(r.vy, 2);
       r.dived = true;
       r.diveTime = 0.5;
+      r.diveCooldown = ABILITY_COOLDOWN;
       if (r.id === this.playerId) this.events.push('dive');
     }
     const len = Math.max(1, Math.hypot(input.x, input.z));
@@ -347,11 +386,27 @@ export class Simulation {
     r.z += r.vz * dt;
     r.y += r.vy * dt;
     // Solid ledge faces require a jump; gradual ramps can be walked up.
-    for (const p of this.course.platforms) {
+    for (const index of nearbyPlatforms(this.course.platforms, r.x, r.z)) {
+      const p = this.course.platforms[index];
       const pos = toLocal(p, r.x, r.z),
         prev = toLocal(p, prevX, prevZ);
       if (Math.abs(pos.x) > p.w / 2 || Math.abs(pos.z) > p.d / 2) continue;
-      if (platformHeight(p, r.z, r.x) <= Math.max(prevY, r.y) + 0.35) continue;
+      const height = platformHeight(p, r.z, r.x);
+      const previouslyInside =
+        Math.abs(prev.x) <= p.w / 2 + 0.08 &&
+        Math.abs(prev.z) <= p.d / 2 + 0.08;
+      // A diving racer can intersect a rising ramp while still moving upward.
+      // Catch crossing its top from above in surface-relative coordinates.
+      if (
+        p.endY !== undefined &&
+        previouslyInside &&
+        prevY >= platformHeight(p, prevZ, prevX) - 0.05 &&
+        r.y <= height
+      ) {
+        r.y = height;
+        r.vy = 0;
+      }
+      if (height <= Math.max(prevY, r.y) + 0.02) continue;
       const velocity = toLocal({ x: 0, z: 0, yaw: p.yaw }, r.vx, r.vz);
       if (Math.abs(prev.z) >= p.d / 2) {
         pos.z = prev.z;
@@ -457,6 +512,49 @@ export class Simulation {
         this.events.push('finish');
       }
     }
+  }
+  kick(r: Racer, input: Input) {
+    if (r.kickCooldown > 0 || r.stun > 0 || r.finished) return;
+    r.kickCooldown = ABILITY_COOLDOWN;
+    r.kickTime = 0.3;
+    const velocity =
+      Math.hypot(input.x, input.z) > 0.1
+        ? input
+        : Math.hypot(r.vx, r.vz) > 0.5
+          ? { x: r.vx, z: r.vz }
+          : toWorld(
+              { x: 0, z: 0, yaw: routeAt(this.course, r.progress, r.lane).yaw },
+              0,
+              1,
+            );
+    const length = Math.hypot(velocity.x, velocity.z) || 1;
+    const forward = { x: velocity.x / length, z: velocity.z / length };
+    const target = this.racers
+      .filter((other) => {
+        const dx = other.x - r.x,
+          dz = other.z - r.z,
+          distance = Math.hypot(dx, dz);
+        return (
+          other.id !== r.id &&
+          !other.finished &&
+          other.invincible <= 0 &&
+          Math.abs(other.y - r.y) < 1.7 &&
+          distance < 2.8 &&
+          (distance < 0.1 || (dx * forward.x + dz * forward.z) / distance > 0.2)
+        );
+      })
+      .sort(
+        (a, b) =>
+          Math.hypot(a.x - r.x, a.z - r.z) - Math.hypot(b.x - r.x, b.z - r.z),
+      )[0];
+    if (r.id === this.playerId) this.events.push('kick');
+    if (!target) return;
+    target.stun = 1;
+    target.vx = forward.x * 8;
+    target.vz = forward.z * 8;
+    target.vy = Math.max(target.vy, 3);
+    target.grounded = false;
+    if (target.id === this.playerId) this.events.push('hit');
   }
   collide(r: Racer, o: Obstacle) {
     const p = obstaclePose(o, this.worldTime);

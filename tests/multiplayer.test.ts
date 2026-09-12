@@ -33,6 +33,7 @@ void test('normal names survive and invalid network payloads are rejected', () =
     z: -1,
     jump: true,
     dive: false,
+    kick: false,
   });
   const world = captureWorld(new Simulation(), 1, 1);
   world.state = 'racing';

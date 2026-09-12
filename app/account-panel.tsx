@@ -176,7 +176,7 @@ export function OutfitControls({
 export default function AccountPanel({
   controller,
   cosmetics,
-  onCosmeticsChange,
+  onCustomize,
   onBeforeSignOut,
   onStaff,
   backend = gameBackend,
@@ -184,6 +184,7 @@ export default function AccountPanel({
   controller: AccountController;
   cosmetics: Cosmetics;
   onCosmeticsChange: (value: Cosmetics) => void;
+  onCustomize?: () => void;
   onBeforeSignOut?: () => Promise<void>;
   onStaff?: () => void;
   backend?: GameBackend;
@@ -260,7 +261,9 @@ export default function AccountPanel({
           Accounts and public matchmaking are not available yet. Solo courses
           and private friend rooms are ready to play.
         </p>
-        <OutfitControls value={cosmetics} onChange={onCosmeticsChange} />
+        <button type="button" className="tc-secondary" onClick={onCustomize}>
+          Open star shop & outfits
+        </button>
       </section>
     );
   return (
@@ -324,7 +327,13 @@ export default function AccountPanel({
                 3–24 letters, numbers, or underscores. Other racers see this
                 name.
               </p>
-              <OutfitControls value={cosmetics} onChange={onCosmeticsChange} />
+              <button
+                type="button"
+                className="tc-secondary"
+                onClick={onCustomize}
+              >
+                Open star shop & outfits
+              </button>
               <button className="tc-primary" type="submit" disabled={busy}>
                 <Check size={17} />
                 {busy ? 'Saving…' : 'Save player profile'}

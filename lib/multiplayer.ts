@@ -130,6 +130,7 @@ export function validateInput(value: unknown): Input | null {
     z: Math.max(-1, Math.min(1, v.z)),
     jump: v.jump,
     dive: v.dive,
+    kick: v.kick === true,
   };
 }
 export function captureWorld(
@@ -184,6 +185,9 @@ export function isWorld(value: unknown): value is WorldPacket {
           'checkpoint',
           'progress',
           'diveTime',
+          'diveCooldown',
+          'kickCooldown',
+          'kickTime',
           'stun',
           'speed',
           'finishTime',
@@ -259,6 +263,7 @@ export class Party {
   lastInput = 0;
   pendingJump = false;
   pendingDive = false;
+  pendingKick = false;
   closed = false;
   timer: ReturnType<typeof setTimeout> | null = null;
   inputTimes = new Map<number, number>();
@@ -313,7 +318,7 @@ export class Party {
     this.peer =
       online?.lease.peer ??
       (host
-        ? new Peer(`tumble-club-v3-${this.view.code}`, { debug: 0 })
+        ? new Peer(`tumble-club-v4-${this.view.code}`, { debug: 0 })
         : new Peer({ debug: 0 }));
     this.timer = setTimeout(
       () =>
@@ -382,7 +387,7 @@ export class Party {
         this.callbacks.roster(this.view.members, 0);
       } else {
         const c = this.peer!.connect(
-          online?.assignment.hostPeerId ?? `tumble-club-v3-${this.view.code}`,
+          online?.assignment.hostPeerId ?? `tumble-club-v4-${this.view.code}`,
           {
             reliable: true,
             serialization: 'json',
@@ -394,7 +399,7 @@ export class Party {
             type: 'join',
             name: cleanName(name),
             color,
-            protocol: 3,
+            protocol: 4,
             cosmetics: normalizeCosmetics({
               ...cosmetics,
               color: OUTFIT_COLORS[color],
@@ -440,7 +445,7 @@ export class Party {
         const m = data as Record<string, unknown>;
         if (id < 0) {
           if (admitting) return;
-          if (m.type !== 'join' || m.protocol !== 3) {
+          if (m.type !== 'join' || m.protocol !== 4) {
             this.send(c, {
               type: 'error',
               message: 'Please reload the game before joining.',
@@ -566,6 +571,7 @@ export class Party {
           const old = this.sim.humanInputs.get(id);
           input.jump ||= old?.jump ?? false;
           input.dive ||= old?.dive ?? false;
+          input.kick ||= old?.kick ?? false;
           this.sim.humanInputs.set(id, input);
           this.inputTimes.set(id, now);
           this.inputSequences.set(id, m.sequence);
@@ -729,7 +735,7 @@ export class Party {
         return;
       this.round = Number(m.round);
       this.lastSequence = -1;
-      this.pendingJump = this.pendingDive = false;
+      this.pendingJump = this.pendingDive = this.pendingKick = false;
       this.sim.reset(course);
       this.sim.setHumans(
         this.view.members.map((p) => p.id),
@@ -859,7 +865,7 @@ export class Party {
     this.inputTimes.clear();
     this.inputSequences.clear();
     this.respawnTimes.clear();
-    this.pendingJump = this.pendingDive = false;
+    this.pendingJump = this.pendingDive = this.pendingKick = false;
     this.nextCourse = null;
     this.sim.reset(course);
     this.sim.setHumans(this.view.members.map((p) => p.id));
@@ -940,6 +946,7 @@ export class Party {
     } else {
       this.pendingJump ||= this.sim.input.jump;
       this.pendingDive ||= this.sim.input.dive;
+      this.pendingKick ||= this.sim.input.kick ?? false;
       if (this.view.status === 'racing' && now - this.lastInput >= 40) {
         this.lastInput = now;
         if (this.server)
@@ -951,13 +958,16 @@ export class Party {
               ...this.sim.input,
               jump: this.pendingJump,
               dive: this.pendingDive,
+              kick: this.pendingKick,
             },
           });
         this.pendingJump = false;
         this.pendingDive = false;
+        this.pendingKick = false;
       }
       this.sim.input.jump = false;
       this.sim.input.dive = false;
+      this.sim.input.kick = false;
       if (
         this.view.status === 'racing' &&
         now - this.lastPacket > 12000 &&

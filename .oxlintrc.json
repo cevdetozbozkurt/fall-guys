@@ -28,6 +28,9 @@
     "out/**",
     "build/**",
     "dist/**",
+    "docs/**",
+    "outputs/**",
+    "web-dist/**",
     "coverage/**",
     "next-env.d.ts"
   ],

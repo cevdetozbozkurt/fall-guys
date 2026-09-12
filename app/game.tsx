@@ -2,6 +2,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   UserRound,
+  Menu,
+  Star,
   Radar,
   Shirt,
   ShieldCheck,
@@ -11,7 +13,6 @@ import {
   ArrowUp,
   ArrowUpRight,
   AudioLines,
-  Check,
   Copy,
   ChevronRight,
   Crown,
@@ -49,10 +50,13 @@ import {
 import CourseEditor from './course-editor';
 import RouteMap from './course-map';
 import { cameraInput } from '@/lib/routes';
-import AccountPanel, { useAccount, OutfitControls } from './account-panel';
+import AccountPanel, { useAccount } from './account-panel';
+import StarShop from './star-shop';
+import { useProgression } from './use-progression';
+import { starBalance, starsFor, unlockedThrough } from '@/lib/progression';
 import MatchmakingPanel, { useMatchmaking } from './matchmaking-panel';
 import StaffPanel from './staff-panel';
-import InstallGame from './install-game';
+import InstallGame, { useGameInstall } from './install-game';
 import {
   gameBackend,
   backendMessage,
@@ -92,8 +96,9 @@ const emptyParty: PartyView = {
   courseMessage: '',
 };
 
-type RecordEntry = { time: number; rank: number };
 type Snapshot = {
+  diveCooldown: number;
+  kickCooldown: number;
   place: number;
   state: GameState;
   time: number;
@@ -106,6 +111,8 @@ type Snapshot = {
   places: { id: number; place: number; time: number }[];
 };
 const initial: Snapshot = {
+  diveCooldown: 0,
+  kickCooldown: 0,
   place: 0,
   state: 'lobby',
   time: 0,
@@ -135,8 +142,7 @@ export default function Game() {
     menuOpen = useRef(false),
     party = useRef<Party | null>(null),
     touch = useRef({ x: 0, z: 0 }),
-    lastFinished = useRef(false),
-    recordsRef = useRef<Record<string, RecordEntry>>({});
+    lastFinished = useRef(false);
   const [ready, setReady] = useState(false),
     [error, setError] = useState(''),
     [selected, setSelected] = useState(0),
@@ -146,9 +152,9 @@ export default function Game() {
       structuredClone(DEFAULT_RECIPE),
     ),
     [editingKey, setEditingKey] = useState<number | undefined>(),
-    [color, setColor] = useState(0),
     [mode, setMode] = useState('race'),
-    [muted, setMuted] = useState(false);
+    [muted, setMuted] = useState(false),
+    [music, setMusic] = useState(true);
   const [snap, setSnap] = useState(initial),
     [modal, setModal] = useState<
       | 'courses'
@@ -160,9 +166,9 @@ export default function Game() {
       | 'matchmaking'
       | 'staff'
       | 'outfit'
+      | 'menu'
       | null
     >(null),
-    [records, setRecords] = useState<Record<string, RecordEntry>>({}),
     [notice, setNotice] = useState(''),
     [series, setSeries] = useState(false),
     [seriesPoints, setSeriesPoints] = useState(0),
@@ -173,6 +179,12 @@ export default function Game() {
     [partyCourse, setPartyCourse] = useState(1),
     [copyState, setCopyState] = useState('');
   const accountController = useAccount();
+  const progression = useProgression(accountController.session?.user.id);
+  const progressRef = useRef(progression);
+  useEffect(() => {
+    progressRef.current = progression;
+  }, [progression]);
+  const install = useGameInstall();
   const [cosmetics, setCosmetics] = useState<Cosmetics>({
     ...DEFAULT_COSMETICS,
   });
@@ -191,7 +203,6 @@ export default function Game() {
     const outfit = normalizeCosmetics(value);
     cosmeticsRef.current = outfit;
     setCosmetics(outfit);
-    setColor(COLORS.indexOf(outfit.color));
     engine.current?.setCosmetics(outfit);
     try {
       localStorage.setItem('tumble-club-outfit-v1', JSON.stringify(outfit));
@@ -317,9 +328,7 @@ export default function Game() {
     racing = snap.state !== 'lobby',
     finished = snap.state === 'finished',
     qualified = (snap.place ?? 0) > 0 && snap.rank <= 8;
-  const completed = Object.keys(records).filter(
-    (id) => Number(id) <= COURSES.length,
-  ).length;
+  const unlocked = unlockedThrough(progression.progress);
   const roomCourses = [
     ...COURSES,
     ...partyView.customCourses.map((r) => buildCourse(r)),
@@ -337,6 +346,11 @@ export default function Game() {
     sim.current = simulation;
     const audio = new Sound();
     sound.current = audio;
+    try {
+      const enabled = localStorage.getItem('tumble-music') !== 'false';
+      audio.setMusic(enabled);
+      queueMicrotask(() => setMusic(enabled));
+    } catch {}
     let destroyed = false,
       frame = 0,
       last = 0,
@@ -372,30 +386,6 @@ export default function Game() {
       }
     } catch {
       /* The course builder remains available without storage. */
-    }
-    try {
-      const saved = JSON.parse(
-        localStorage.getItem('tumble-club-records') || '{}',
-      );
-      const clean: Record<string, RecordEntry> = {};
-      for (const [k, v] of Object.entries(saved)) {
-        const r = v as RecordEntry;
-        if (
-          Number(k) >= 1 &&
-          Number(k) <= 4294968296 &&
-          Number.isFinite(r.time) &&
-          r.time > 0 &&
-          r.rank >= 1 &&
-          r.rank <= 12
-        )
-          clean[k] = r;
-      }
-      recordsRef.current = clean;
-      queueMicrotask(() => {
-        if (!destroyed) setRecords(clean);
-      });
-    } catch {
-      /* Play remains available without local storage. */
     }
     import('@/lib/scene')
       .then(({ RaceScene: Scene }) => {
@@ -457,35 +447,26 @@ export default function Game() {
             noticeTimer -= dt;
             if (noticeTimer <= 0) setNotice('');
           }
-          if (simulation.state === 'finished' && !lastFinished.current) {
+          if (
+            (simulation.player.finished || simulation.state === 'finished') &&
+            !lastFinished.current
+          ) {
             lastFinished.current = true;
             keys.current.clear();
             touch.current = { x: 0, z: 0 };
             if (simulation.player.finished) {
-              const id = String(simulation.course.id),
-                old = recordsRef.current[id];
-              const entry = {
-                time: Math.min(
-                  old?.time ?? Infinity,
-                  simulation.player.finishTime || simulation.time,
-                ),
-                rank: Math.min(old?.rank ?? 13, simulation.rank),
-              };
-              const next = { ...recordsRef.current, [id]: entry };
-              recordsRef.current = next;
-              setRecords(next);
-              try {
-                localStorage.setItem(
-                  'tumble-club-records',
-                  JSON.stringify(next),
-                );
-              } catch {}
+              progressRef.current.finish(
+                simulation.course.id,
+                simulation.player.finishTime || simulation.time,
+              );
             }
           }
           uiElapsed += dt;
           if (uiElapsed > 0.08 && simulation.state !== 'lobby') {
             uiElapsed = 0;
             setSnap({
+              diveCooldown: simulation.player.diveCooldown,
+              kickCooldown: simulation.player.kickCooldown,
               place: simulation.player.finished,
               state: simulation.state,
               time: simulation.time,
@@ -528,6 +509,7 @@ export default function Game() {
       touch.current = { x: 0, z: 0 };
       simulation.input.jump = false;
       simulation.input.dive = false;
+      simulation.input.kick = false;
       simulation.input.x = 0;
       simulation.input.z = 0;
       if (simulation.multiplayer) return;
@@ -552,6 +534,7 @@ export default function Game() {
           'KeyS',
           'KeyD',
           'KeyE',
+          'KeyF',
           'ShiftLeft',
           'ShiftRight',
           'Escape',
@@ -573,6 +556,7 @@ export default function Game() {
       }
       if (simulation.paused) return;
       keys.current.add(e.code);
+      if (!e.repeat && e.code === 'KeyF') simulation.input.kick = true;
       if (!e.repeat && e.code === 'Space') simulation.input.jump = true;
       if (!e.repeat && ['KeyE', 'ShiftLeft', 'ShiftRight'].includes(e.code))
         simulation.input.dive = true;
@@ -616,6 +600,13 @@ export default function Game() {
     const nextCourse =
       typeof selection === 'number' ? COURSES[selection] : selection;
     if (!nextCourse) return;
+    if (
+      nextCourse.id <= COURSES.length &&
+      nextCourse.id > unlockedThrough(progressRef.current.progress)
+    ) {
+      setModal('courses');
+      return;
+    }
     setSelected(nextCourse.recipe ? -1 : nextCourse.id - 1);
     setActiveCourse(nextCourse);
     sim.current.reset(nextCourse);
@@ -859,49 +850,23 @@ export default function Game() {
               </span>
             </span>
           </button>
-          <nav aria-label="Game menu">
-            <button className="nav-active" onClick={home}>
-              <Gamepad2 size={18} />
-              Play
-            </button>
-            <button onClick={() => setModal('courses')}>
-              The courses <span>{COURSES.length}</span>
-            </button>
-            <button className="party-nav" onClick={() => setModal('party')}>
-              <Users size={17} />
-              {inParty ? `Room ${partyView.code}` : 'Play with friends'}
-            </button>
-            <button onClick={() => setModal('matchmaking')}>
-              <Radar size={17} />
-              Find a game
-            </button>
-            <button onClick={() => setModal('builder')}>
-              <Hammer size={17} /> Course builder
-            </button>
-            <button onClick={() => setModal('help')}>
-              How to play <ArrowUpRight size={15} />
-            </button>
-          </nav>
           <div className="header-actions">
-            <button className="account-nav" onClick={() => setModal('account')}>
-              <UserRound size={18} />
-              <span>
-                {accountController.account?.profile?.username ??
-                  (accountController.session ? 'Your account' : 'Sign in')}
-              </span>
-            </button>
-            <span className="completion">
-              <Trophy size={19} />
-              <b>{completed}</b>
-              <span>/ {COURSES.length}</span>
-            </span>
-            <span className="header-rule" />
-            <button
-              className="icon-button"
-              aria-label={muted ? 'Turn sound on' : 'Mute sound'}
-              onClick={toggleSound}
+            <span
+              className="star-wallet"
+              aria-label={
+                starBalance(progression.progress) + ' stars available'
+              }
             >
-              {muted ? <VolumeX size={20} /> : <Volume2 size={20} />}
+              <Star size={19} />
+              <b>{starBalance(progression.progress)}</b>
+            </span>
+            <button
+              className="icon-button menu-toggle"
+              aria-label="Open menu"
+              aria-expanded={modal === 'menu'}
+              onClick={() => setModal('menu')}
+            >
+              <Menu size={25} />
             </button>
           </div>
         </header>
@@ -928,35 +893,6 @@ export default function Game() {
                 <br />
                 Build your own route and race your friends.
               </p>
-              <RadioGroup
-                value={mode}
-                onValueChange={(v) => setMode(String(v))}
-                aria-label="Race mode"
-                className="mode-picker"
-              >
-                <label
-                  htmlFor="quick-race-mode"
-                  className={
-                    mode === 'race' ? 'mode-option chosen' : 'mode-option'
-                  }
-                >
-                  <RadioGroupItem id="quick-race-mode" value="race" />
-                  <Flag size={17} />
-                  Quick race
-                </label>
-                <label
-                  htmlFor="championship-mode"
-                  className={
-                    mode === 'championship'
-                      ? 'mode-option chosen'
-                      : 'mode-option'
-                  }
-                >
-                  <RadioGroupItem id="championship-mode" value="championship" />
-                  <Crown size={18} />
-                  Championship
-                </label>
-              </RadioGroup>
               <button
                 className="play-button"
                 onClick={start}
@@ -966,31 +902,30 @@ export default function Game() {
                   {ready
                     ? inParty
                       ? 'OPEN YOUR ROOM'
-                      : 'LET’S RACE'
+                      : 'PLAY'
                     : 'WARMING UP…'}
                 </span>
                 <ArrowUpRight size={29} />
               </button>
-              <div className="under-play">
-                <Users size={15} />
-                {mode === 'championship'
-                  ? '50 rounds · Finish in the top 8 to advance'
-                  : 'You + 11 bots · One delightfully chaotic race'}
+              <div className="home-actions">
+                <button
+                  className="friends-button"
+                  disabled={!ready}
+                  onClick={() => setModal('matchmaking')}
+                >
+                  <Radar size={18} /> Find Online Game <ArrowRight size={17} />
+                </button>
+                <button
+                  className="friends-button"
+                  disabled={!ready}
+                  onClick={() => setModal('party')}
+                >
+                  <Users size={18} /> Play with Friends <ArrowRight size={17} />
+                </button>
               </div>
-              <button
-                className="friends-button"
-                disabled={!ready}
-                onClick={() => setModal('party')}
-              >
-                <Users size={17} />
-                Play with friends <ArrowRight size={17} />
-              </button>
-              <button
-                className="builder-shortcut text-button"
-                onClick={() => setModal('builder')}
-              >
-                <Hammer size={17} /> Build your own course
-              </button>
+              <p className="home-progress">
+                Course {unlocked} / 50 unlocked · Earn stars. Find your style.
+              </p>
             </div>
             <div className="course-sticker">
               <span>
@@ -1005,40 +940,6 @@ export default function Game() {
                 <span>•</span>
                 {course.theme.toLowerCase()}
               </div>
-            </div>
-            <div className="character-picker">
-              <button
-                className="outfit-link"
-                onClick={() => setModal('outfit')}
-                disabled={inParty}
-              >
-                <Shirt size={16} />
-                YOUR LOOK
-              </button>
-              <div>
-                {COLORS.map((c, i) => (
-                  <button
-                    key={c}
-                    aria-label={`Choose ${['peach', 'purple', 'mint', 'yellow', 'pink', 'blue'][i]} racer`}
-                    aria-pressed={color === i}
-                    disabled={inParty}
-                    style={{ background: c }}
-                    className={color === i ? 'selected' : ''}
-                    onClick={() => {
-                      changeCosmetics({
-                        ...cosmetics,
-                        color: COLORS[i] as Cosmetics['color'],
-                      });
-                    }}
-                  >
-                    {color === i && <Check size={16} strokeWidth={3} />}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <InstallGame />
-            <div className="scene-note">
-              <span className="note-line" />A little wobble is part of the plan.
             </div>
           </>
         )}
@@ -1118,7 +1019,15 @@ export default function Game() {
               <div className="keyboard-hint">
                 <kbd>W A S D</kbd> Move <span />
                 <kbd>SPACE</kbd> Jump <span />
-                <kbd>SHIFT</kbd> Dive
+                <kbd>SHIFT</kbd> Dive{' '}
+                {snap.diveCooldown > 0
+                  ? Math.ceil(snap.diveCooldown) + 's'
+                  : '✓'}
+                <span />
+                <kbd>F</kbd> Kick{' '}
+                {snap.kickCooldown > 0
+                  ? Math.ceil(snap.kickCooldown) + 's'
+                  : '✓'}
               </div>
               <div className="race-progress">
                 <span>START</span>
@@ -1169,16 +1078,55 @@ export default function Game() {
                 </div>
                 <div className="touch-actions">
                   <button
+                    aria-label="Kick"
+                    disabled={snap.kickCooldown > 0}
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      if (sim.current) sim.current.input.kick = true;
+                    }}
+                    onKeyDown={(e) => {
+                      if (
+                        (e.key === 'Enter' || e.key === ' ') &&
+                        !e.repeat &&
+                        sim.current
+                      )
+                        sim.current.input.kick = true;
+                    }}
+                  >
+                    {snap.kickCooldown > 0
+                      ? Math.ceil(snap.kickCooldown) + 's'
+                      : 'KICK'}
+                  </button>
+                  <button
                     aria-label="Dive"
+                    disabled={snap.diveCooldown > 0}
+                    onKeyDown={(e) => {
+                      if (
+                        (e.key === 'Enter' || e.key === ' ') &&
+                        !e.repeat &&
+                        sim.current
+                      )
+                        sim.current.input.dive = true;
+                    }}
                     onPointerDown={(e) => {
                       e.preventDefault();
                       if (sim.current) sim.current.input.dive = true;
                     }}
                   >
-                    DIVE
+                    {snap.diveCooldown > 0
+                      ? Math.ceil(snap.diveCooldown) + 's'
+                      : 'DIVE'}
                   </button>
                   <button
                     aria-label="Jump"
+                    onKeyDown={(e) => {
+                      if (
+                        (e.key === 'Enter' || e.key === ' ') &&
+                        !e.repeat &&
+                        sim.current
+                      )
+                        sim.current.input.jump = true;
+                    }}
                     onPointerDown={(e) => {
                       e.preventDefault();
                       if (sim.current) sim.current.input.jump = true;
@@ -1194,59 +1142,6 @@ export default function Game() {
         )}
       </section>
 
-      {!racing && (
-        <section className="course-shelf" aria-label="Choose a course">
-          <div className="shelf-heading">
-            <div>
-              <span className="section-kicker">PICK YOUR PLAYGROUND</span>
-              <h2>50 worlds. Endless routes.</h2>
-            </div>
-            <button className="text-button" onClick={() => setModal('courses')}>
-              Explore all courses <ArrowRight size={17} />
-            </button>
-          </div>
-          <div className="course-strip">
-            {COURSES.map((c, i) => (
-              <button
-                key={c.id}
-                className={`course-card ${selected === i ? 'active' : ''}`}
-                onClick={() => load(i)}
-                aria-pressed={selected === i}
-              >
-                <div className="course-thumbnail">
-                  <CourseMap index={i} />
-                  <span className="course-number">
-                    {String(c.id).padStart(2, '0')}
-                  </span>
-                  {records[c.id] && (
-                    <span className="course-medal">
-                      <Check size={13} />
-                    </span>
-                  )}
-                </div>
-                <div className="course-card-label">
-                  <strong>{c.name}</strong>
-                  {selected === i ? (
-                    <span className="selected-dot" />
-                  ) : (
-                    <ChevronRight size={14} />
-                  )}
-                </div>
-              </button>
-            ))}
-          </div>
-          <footer>
-            <span>
-              <span className="footer-dot" /> All courses unlocked. All tumbles
-              welcome.
-            </span>
-            <span>
-              Made for the fun of it. <Sparkles size={13} />
-            </span>
-          </footer>
-        </section>
-      )}
-
       <Dialog
         open={modal !== null}
         onOpenChange={(open) => {
@@ -1255,54 +1150,60 @@ export default function Game() {
       >
         <DialogContent
           className={
-            modal === 'builder'
-              ? 'game-dialog builder-dialog'
-              : modal === 'courses'
-                ? 'game-dialog courses-dialog'
-                : modal === 'staff'
-                  ? 'game-dialog builder-dialog'
-                  : 'game-dialog'
+            modal === 'outfit'
+              ? 'game-dialog shop-dialog'
+              : modal === 'builder'
+                ? 'game-dialog builder-dialog'
+                : modal === 'courses'
+                  ? 'game-dialog courses-dialog'
+                  : modal === 'staff'
+                    ? 'game-dialog builder-dialog'
+                    : 'game-dialog'
           }
         >
           <DialogTitle>
-            {modal === 'account'
-              ? 'Your player account.'
-              : modal === 'matchmaking'
-                ? 'Race with the world.'
-                : modal === 'staff'
-                  ? 'Your design studio.'
-                  : modal === 'outfit'
-                    ? 'Make your racer yours.'
-                    : modal === 'builder'
-                      ? 'Build your next challenge.'
-                      : modal === 'party'
-                        ? 'Better with friends.'
-                        : modal === 'courses'
-                          ? 'Pick your playground.'
-                          : modal === 'help'
-                            ? 'A crash course in tumbling.'
-                            : 'Taking a breather?'}
+            {modal === 'menu'
+              ? 'Your cosmic club.'
+              : modal === 'account'
+                ? 'Your player account.'
+                : modal === 'matchmaking'
+                  ? 'Race with the world.'
+                  : modal === 'staff'
+                    ? 'Your design studio.'
+                    : modal === 'outfit'
+                      ? 'Make your racer yours.'
+                      : modal === 'builder'
+                        ? 'Build your next challenge.'
+                        : modal === 'party'
+                          ? 'Better with friends.'
+                          : modal === 'courses'
+                            ? 'Pick your playground.'
+                            : modal === 'help'
+                              ? 'A crash course in tumbling.'
+                              : 'Taking a breather?'}
           </DialogTitle>
           <DialogDescription>
-            {modal === 'account'
-              ? 'Save your look and courses across devices.'
-              : modal === 'matchmaking'
-                ? 'Search for five real players and stay together between rounds.'
-                : modal === 'staff'
-                  ? 'Create courses for the whole club.'
-                  : modal === 'outfit'
-                    ? 'Choose a shape, headwear and glasses.'
-                    : modal === 'builder'
-                      ? 'Arrange sections, test your route, and add it to your friend room.'
-                      : modal === 'party'
-                        ? 'Create a room, share the code, and race together. Up to 8 friends.'
-                        : modal === 'courses'
-                          ? 'Fifty original courses, plus new creations from our designers.'
-                          : modal === 'help'
-                            ? 'A little timing goes a long way. Here’s everything you need.'
-                            : inParty
-                              ? 'Online races keep running while this menu is open.'
-                              : 'Your race is paused. Your rivals can wait.'}
+            {modal === 'menu'
+              ? 'Courses, style and everything in between.'
+              : modal === 'account'
+                ? 'Save your look and courses across devices.'
+                : modal === 'matchmaking'
+                  ? 'Search for five real players and stay together between rounds.'
+                  : modal === 'staff'
+                    ? 'Create courses for the whole club.'
+                    : modal === 'outfit'
+                      ? 'Try on 56 wearables. Earn stars to unlock your favorites.'
+                      : modal === 'builder'
+                        ? 'Arrange sections, test your route, and add it to your friend room.'
+                        : modal === 'party'
+                          ? 'Create a room, share the code, and race together. Up to 8 friends.'
+                          : modal === 'courses'
+                            ? 'Finish each course to unlock the next. Every finish earns at least one star.'
+                            : modal === 'help'
+                              ? 'A little timing goes a long way. Here’s everything you need.'
+                              : inParty
+                                ? 'Online races keep running while this menu is open.'
+                                : 'Your race is paused. Your rivals can wait.'}
           </DialogDescription>
           {modal === 'account' && (
             <AccountPanel
@@ -1315,29 +1216,113 @@ export default function Game() {
                 if (party.current) leaveParty();
               }}
               onStaff={() => setModal('staff')}
+              onCustomize={() => setModal('outfit')}
             />
           )}
-          {modal === 'outfit' && (
-            <div className="tc-online-panel">
-              <div
-                className="outfit-preview"
-                style={
-                  { '--racer-color': cosmetics.color } as React.CSSProperties
-                }
-              >
-                <span className={'outfit-toy body-' + cosmetics.body}>
-                  <i className={'toy-head head-' + cosmetics.head} />
-                  <i className={'toy-eyes eyes-' + cosmetics.eyes} />
-                  <i className="toy-foot left" />
-                  <i className="toy-foot right" />
+          {modal === 'menu' && (
+            <div className="expanded-menu">
+              <button onClick={() => setModal('courses')}>
+                <Flag />
+                <span>
+                  Courses<small>{unlocked} of 50 unlocked</small>
                 </span>
-              </div>
-              <OutfitControls value={cosmetics} onChange={changeCosmetics} />
-              <p className="tc-muted">
-                Your look is saved on this device. Save your player profile to
-                use it across devices.
-              </p>
+                <ChevronRight />
+              </button>
+              <button disabled={inParty} onClick={() => setModal('outfit')}>
+                <Shirt />
+                <span>
+                  Star shop & outfits<small>56 ways to make it yours</small>
+                </span>
+                <ChevronRight />
+              </button>
+              <button onClick={() => setModal('builder')}>
+                <Hammer />
+                <span>
+                  Course builder
+                  <small>Create a challenge for your friends</small>
+                </span>
+                <ChevronRight />
+              </button>
+              <button onClick={() => setModal('account')}>
+                <UserRound />
+                <span>
+                  {accountController.account?.profile?.username ??
+                    'Your account'}
+                  <small>Sign in, save and sync</small>
+                </span>
+                <ChevronRight />
+              </button>
+              <button onClick={() => setModal('help')}>
+                <Gamepad2 />
+                <span>How to play</span>
+                <ChevronRight />
+              </button>
+              <details className="menu-settings">
+                <summary>Race & audio settings</summary>
+                <RadioGroup
+                  value={mode}
+                  onValueChange={(v) => setMode(String(v))}
+                  aria-label="Race mode"
+                  className="mode-picker"
+                >
+                  <label className="mode-option" htmlFor="quick-race-mode">
+                    <RadioGroupItem id="quick-race-mode" value="race" />
+                    Quick race
+                  </label>
+                  <label className="mode-option" htmlFor="championship-mode">
+                    <RadioGroupItem
+                      id="championship-mode"
+                      value="championship"
+                    />
+                    Championship
+                  </label>
+                </RadioGroup>
+                <button className="tc-secondary" onClick={toggleSound}>
+                  {muted ? <VolumeX size={18} /> : <Volume2 size={18} />} Sound{' '}
+                  {muted ? 'off' : 'on'}
+                </button>
+                <button
+                  className="tc-secondary"
+                  onClick={() => {
+                    const next = !music;
+                    setMusic(next);
+                    sound.current?.setMusic(next);
+                    if (next) sound.current?.unlock();
+                    try {
+                      localStorage.setItem('tumble-music', String(next));
+                    } catch {}
+                  }}
+                >
+                  <AudioLines size={18} /> Music {music ? 'on' : 'off'}
+                </button>
+              </details>
+              <InstallGame controller={install} />
             </div>
+          )}
+          {modal === 'outfit' && (
+            <>
+              <StarShop
+                value={cosmetics}
+                progress={progression.progress}
+                busy={progression.busy}
+                onChange={changeCosmetics}
+                onBuy={progression.buy}
+                onSave={
+                  accountController.account?.profile
+                    ? async () => {
+                        await gameBackend.saveProfile(
+                          accountController.account!.profile!.username,
+                          cosmetics,
+                        );
+                        await accountController.refresh();
+                      }
+                    : undefined
+                }
+              />
+              {progression.message && (
+                <output className="tc-muted">{progression.message}</output>
+              )}
+            </>
           )}
           {modal === 'matchmaking' && (
             <MatchmakingPanel
@@ -1631,6 +1616,8 @@ export default function Game() {
                 return (
                   <button
                     key={c.id}
+                    disabled={c.id > unlocked}
+                    aria-label={c.name + (c.id > unlocked ? ', locked' : '')}
                     onClick={() => load(i)}
                     className={
                       selected === i
@@ -1644,11 +1631,32 @@ export default function Game() {
                     </div>
                     <div>
                       <strong>{c.name}</strong>
+                      <span
+                        className="course-stars"
+                        aria-label={
+                          starsFor(c.id, progression.progress.best[c.id]) +
+                          ' stars'
+                        }
+                      >
+                        {'★'.repeat(
+                          starsFor(c.id, progression.progress.best[c.id]),
+                        )}
+                        {'☆'.repeat(
+                          3 - starsFor(c.id, progression.progress.best[c.id]),
+                        )}
+                      </span>
+                      <span className="star-targets">
+                        ★★★ {c.starTimes?.gold}s · ★★ {c.starTimes?.silver}s · ★
+                        Finish
+                      </span>
                       <small>
                         <Icon size={13} />
                         {c.difficulty}
-                        {records[c.id] &&
-                          ` · Best ${formatTime(records[c.id].time)}`}
+                        {c.id > unlocked
+                          ? ' · Locked'
+                          : progression.progress.best[c.id]
+                            ? ` · Best ${formatTime(progression.progress.best[c.id])}`
+                            : ' · Ready'}
                       </small>
                     </div>
                   </button>
@@ -1707,7 +1715,8 @@ export default function Game() {
                   <strong>Find your feet</strong>
                   <p>
                     Move forward, backward, and sideways. Up always moves toward
-                    the finish.
+                    the camera’s direction. Steer into turns as the camera
+                    follows.
                   </p>
                 </div>
               </div>
@@ -1729,8 +1738,8 @@ export default function Game() {
                 <div>
                   <strong>Commit to the dive</strong>
                   <p>
-                    Press in the air to launch forward. You get one dive per
-                    jump.
+                    Press in the air to launch forward. Diving recharges in 5
+                    seconds.
                   </p>
                 </div>
               </div>
@@ -1747,11 +1756,21 @@ export default function Game() {
                   </p>
                 </div>
               </div>
+              <div className="help-row">
+                <kbd>F</kbd>
+                <div>
+                  <strong>Make some space</strong>
+                  <p>
+                    Kick a nearby runner in front of you to knock them off
+                    balance for one second. Kicking recharges in five seconds.
+                  </p>
+                </div>
+              </div>
               <div className="help-note">
                 <Gamepad2 size={22} />
                 <p>
                   On a touchscreen, use the left pad to steer and the right
-                  buttons to jump and dive.
+                  buttons to jump, dive and kick.
                 </p>
               </div>
               <p className="help-fine">
@@ -1763,7 +1782,9 @@ export default function Game() {
               <p className="help-fine">
                 Quick race: finish any course within 150 seconds. Championship:
                 place in the top 8 in all 50 rounds. Your course records are
-                saved on this device.
+                saved on this device, or synced with your account. Improve your
+                best times to earn up to three stars per course. Online rooms
+                can race all courses; solo unlocks advance in order.
               </p>
             </div>
           )}
@@ -1848,6 +1869,25 @@ export default function Game() {
                 ? 'The 150-second clock ran out. Your next run starts fresh.'
                 : course.description}
           </DialogDescription>
+          {course.starTimes && (
+            <div className="result-stars">
+              <strong>
+                {snap.place
+                  ? '★'.repeat(starsFor(course.id, snap.finishTime)) +
+                    '☆'.repeat(3 - starsFor(course.id, snap.finishTime))
+                  : '☆☆☆'}
+              </strong>
+              <span>
+                ★★★ {course.starTimes.gold}s · ★★ {course.starTimes.silver}s · ★
+                Finish
+              </span>
+              <small>
+                {course.id > unlocked
+                  ? 'Finish earlier solo courses to earn these stars.'
+                  : 'Best runs earn stars once. Beat your best to earn more.'}
+              </small>
+            </div>
+          )}
           <div className="result-stats">
             <div>
               <span>PLACE</span>

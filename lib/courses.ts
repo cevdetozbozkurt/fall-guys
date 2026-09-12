@@ -1,5 +1,6 @@
 import { buildCourse, EXPANSION, type CourseRecipe } from './course-builder.ts';
 import type { CourseRibbon } from './ribbon.ts';
+import { COURSE_TARGETS } from './course-balance.ts';
 
 export type Platform = {
   x: number;
@@ -42,6 +43,7 @@ export type Course = {
   sky: string;
   accent: string;
   length: number;
+  starTimes?: { gold: number; silver: number; target: number };
   platforms: Platform[];
   ribbons?: CourseRibbon[];
   obstacles: Obstacle[];
@@ -139,9 +141,26 @@ const rebuilt = EXPANSION.map((r, i) => ({
   ],
 }));
 export const COURSES: Course[] = [...originals, ...rebuilt, ...newRoutes].map(
-  (r, i) => buildCourse(r, i + 1),
+  (r, i) => {
+    const additions = [
+      'climb',
+      'fork',
+      i % 2 ? 'right' : 'left',
+      'hammer',
+      'slide',
+      'jump',
+      'falling',
+    ] as const;
+    const segments = [...r.segments];
+    while (segments.length < 10) {
+      const type = additions[(segments.length + i) % additions.length];
+      segments.push({ type, difficulty: i < 3 ? 2 : 3 });
+    }
+    return buildCourse({ ...r, segments }, i + 1);
+  },
 );
 for (const [i, c] of COURSES.entries()) {
+  c.starTimes = COURSE_TARGETS[String(c.id) as keyof typeof COURSE_TARGETS];
   c.sky = ['#080f28', '#100d2b', '#071c2b'][i % 3];
   c.color = ['#7943d4', '#216ba1', '#b43aa0', '#157d83'][i % 4];
   c.accent = ['#30f0e2', '#ff59c7', '#ffe16b', '#71a7ff'][i % 4];

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { createAvatar } from './avatar';
 import { animateRacerRotation } from './racer-pose';
 import { buildRibbonGeometry } from './ribbon';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
@@ -169,7 +170,6 @@ export class RaceScene {
     return plane;
   }
   character(color: string, id: number) {
-    const g = new THREE.Group();
     const outfit =
       this.memberCosmetics.get(id) ??
       (id === this.sim.playerId
@@ -180,101 +180,7 @@ export class RaceScene {
             head: ['none', 'cap', 'mohawk'][id % 3],
             eyes: id % 2 ? 'visor' : 'shades',
           }));
-    const torso =
-      outfit.body === 'round'
-        ? this.sphere(0.7, color, 0, 1.13, 0)
-        : this.box(1.12, 1.25, 0.85, color, 0, 1.14, 0, 0.38);
-    if (outfit.body === 'tall') g.scale.set(0.9, 1.13, 0.9);
-    if (outfit.body === 'round') g.scale.set(1.08, 0.96, 1.08);
-    g.add(torso);
-    const head = this.sphere(0.58, color, 0, 1.75, 0);
-    head.scale.set(1, 0.9, 0.85);
-    g.add(head);
-    const visor = this.box(0.87, 0.41, 0.19, '#131f49', 0, 1.72, -0.43, 0.16);
-    if (outfit.eyes === 'visor') {
-      g.add(visor);
-      for (const x of [-0.19, 0.19])
-        g.add(this.box(0.1, 0.14, 0.045, '#72fff1', x, 1.72, -0.54, 0.04));
-    } else {
-      this.disposeObject(visor);
-      for (const x of [-0.25, 0.25]) {
-        g.add(this.box(0.44, 0.32, 0.13, '#101934', x, 1.74, -0.48, 0.1));
-        g.add(
-          this.box(
-            0.32,
-            0.22,
-            0.04,
-            outfit.eyes === 'shades' ? '#36bacf' : '#e0fffc',
-            x,
-            1.74,
-            -0.56,
-            0.07,
-          ),
-        );
-        if (outfit.eyes === 'glasses')
-          g.add(this.box(0.06, 0.12, 0.035, '#112139', x, 1.74, -0.59, 0.02));
-      }
-      g.add(this.box(0.18, 0.06, 0.08, '#101934', 0, 1.77, -0.5));
-    }
-    g.add(this.box(0.8, 0.65, 0.3, '#26315e', 0, 1.1, 0.48, 0.1));
-    // Small antenna and contrasting sneakers distinguish these original toy racers.
-    if (outfit.head === 'none')
-      g.add(
-        this.cylinder(0.065, 0.25, '#34254f', 0, 2.31, 0),
-        this.sphere(0.13, color, 0, 2.47, 0),
-      );
-    if (outfit.head === 'cap') {
-      const cap = this.sphere(0.6, '#235b95', 0, 2.03, 0);
-      cap.scale.y = 0.6;
-      g.add(cap);
-      g.add(this.box(1.15, 0.1, 0.65, '#42efd7', 0, 2.1, -0.36, 0.15));
-    }
-    if (outfit.head === 'crown') {
-      g.add(this.cylinder(0.5, 0.23, '#ffe16b', 0, 2.27, 0));
-      for (let n = 0; n < 5; n++) {
-        const angle = (n * Math.PI * 2) / 5,
-          tip = new THREE.Mesh(
-            new THREE.ConeGeometry(0.15, 0.35, 4),
-            this.material('#ffe16b'),
-          );
-        tip.position.set(Math.cos(angle) * 0.4, 2.53, Math.sin(angle) * 0.4);
-        g.add(tip);
-      }
-    }
-    if (outfit.head === 'mohawk')
-      for (let n = 0; n < 5; n++)
-        g.add(
-          this.box(
-            0.19,
-            0.38 + Math.sin((n * Math.PI) / 4) * 0.2,
-            0.18,
-            '#ff59c7',
-            0,
-            2.35,
-            n * 0.16 - 0.32,
-            0.04,
-          ),
-        );
-    for (const x of [-1, 1]) {
-      const arm = this.box(0.28, 0.75, 0.3, color, x * 0.68, 1.16, 0, 0.13);
-      arm.name = `arm${x}`;
-      arm.rotation.z = x * 0.23;
-      g.add(arm);
-      const foot = this.box(
-        0.4,
-        0.28,
-        0.61,
-        '#fff9e9',
-        x * 0.29,
-        0.18,
-        -0.13,
-        0.12,
-      );
-      foot.name = `foot${x}`;
-      g.add(foot);
-    }
-    const belt = this.box(1.15, 0.14, 0.87, '#fff9e9', 0, 0.68, 0, 0.05);
-    g.add(belt);
+    const g = createAvatar({ ...outfit, color: color as Cosmetics['color'] });
     if (id === this.sim.playerId) {
       const marker = new THREE.Mesh(
         new THREE.ConeGeometry(0.23, 0.4, 3),
@@ -838,7 +744,12 @@ export class RaceScene {
       animateRacerRotation(g.rotation, r, dt, t, lobby);
       for (const side of [-1, 1]) {
         g.getObjectByName(`foot${side}`)!.position.z =
-          -0.13 + (moving ? Math.sin(t * 17 + side) * 0.26 : 0);
+          -0.13 +
+          (r.kickTime > 0 && side === 1
+            ? -0.75 * Math.sin((r.kickTime / 0.3) * Math.PI)
+            : moving
+              ? Math.sin(t * 17 + side) * 0.26
+              : 0);
         g.getObjectByName(`arm${side}`)!.rotation.x = moving
           ? Math.sin(t * 17 + side) * 0.55
           : Math.sin(t * 2 + side) * 0.1;
@@ -865,17 +776,17 @@ export class RaceScene {
       this.sun.target.position.set(r.x, 0, -r.z - 20);
       this.camera.position.lerp(
         new THREE.Vector3(
-          r.x - Math.sin(this.cameraYaw) * 20,
-          14 + Math.max(0, r.y) * 0.85,
-          -r.z + Math.cos(this.cameraYaw) * 20,
+          r.x - Math.sin(this.cameraYaw) * 12,
+          8.3 + Math.max(0, r.y) * 0.9,
+          -r.z + Math.cos(this.cameraYaw) * 12,
         ),
         Math.min(1, dt * 5),
       );
       this.look.lerp(
         new THREE.Vector3(
-          r.x + Math.sin(this.cameraYaw) * 9,
+          r.x + Math.sin(this.cameraYaw) * 4,
           1 + Math.max(0, r.y) * 0.7,
-          -r.z - Math.cos(this.cameraYaw) * 9,
+          -r.z - Math.cos(this.cameraYaw) * 4,
         ),
         Math.min(1, dt * 6),
       );

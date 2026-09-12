@@ -8,10 +8,19 @@ Choose a solo quick race or a 50-round championship. Courses include actual left
 
 Bends use continuous road surfaces and rails. Fork and slalom corners share rounded paths with their collision geometry, while shortcut gaps remain open. Diving and sliding lean in the racer's current direction, including after turning or releasing the steering input.
 
-- Computer: WASD/arrows to steer, Space to jump, Shift/E to dive in the air, R to respawn, Escape for the menu.
-- Phone/tablet: left touch pad to steer; right Jump/Dive buttons.
+- Computer: WASD/arrows to steer, Space to jump, Shift/E to dive in the air, F to kick, R to respawn, Escape for the menu. Dive and kick recharge in five seconds, even after a fall. A kick hits one nearby runner in front, stunning them for one second.
+- Phone/tablet: left touch pad to steer; right Jump/Dive/Kick buttons show cooldowns. The home screen keeps Play, Find Online Game and Play with Friends visible; a hamburger menu contains courses, outfits, accounts, the builder, installation and audio settings.
 - Install from a supporting browser's app menu. On iPhone/iPad use Safari → Share → Add to Home Screen. Solo play is available offline after the game finishes downloading. Accounts and online play require internet.
-- Outfits include three body shapes, caps, crowns, mohawks, glasses, sunglasses and six colors. All use the same physics and hitbox. Signed-in profiles sync across devices; guests retain device preferences.
+- The star shop has 56 wearables: 10 bodies, 19 head items, 16 eyewear items and 11 back accessories, plus unequip options and six free colors. A large live 3D preview rotates by dragging or using its arrow buttons. Three columns of square thumbnails browse independently of the preview. All outfits share the same physics and hitbox. Signed-in profiles sync across devices; guests retain device preferences.
+- An original synthesized cosmic-pop music loop plays after the first play gesture. Music and overall sound have separate menu controls.
+
+## Course progression and stars
+
+Solo courses unlock in order, starting with course 1. Built-in courses now contain ten sections. Finish an unlocked built-in course within the 150-second race limit to receive at least one star; reach that course's displayed silver/gold times for two/three. Only the best result counts: improving from one to three awards two additional stars, and repeating a result earns no extra currency. Spending stars never removes completion medals or relocks courses. Online rooms can play the whole pool, but progression rewards still require earlier courses to be complete. Custom and designer courses are freely playable without progression rewards.
+
+The course-1 thresholds are 52 seconds for three stars, 63 for two, and any valid finish for one. The benchmark's cautious controller completes it in about 72 seconds. `scripts/calibrate-courses.ts` compares five expert timing variations and a controller that pauses 1.5 seconds at checkpoints across all fifty courses. These are synthetic timing estimates, not measurements of typical human play. All cautious benchmark runs take at least fifty seconds; real-player feedback should guide further balancing.
+
+The account wallet and owned items are private, and purchases are checked and serialized on the server. Each course contributes at most three stars, for 150 total; the full catalog costs fewer than 150. Guest progress is kept locally. Signed-in offline results are cached and submitted in order when reconnected; account purchases require a connection. Guest and account wallets remain separate. Old records from shorter course versions do not grant stars or bypass the new progression. Solo finish times are client-reported, so this is a casual reward economy, not a cheat-proof competitive leaderboard or currency with monetary value.
 
 A WebGL2-capable browser with hardware acceleration is required. This is an installable web game, not an App Store or Google Play binary.
 
@@ -46,7 +55,8 @@ The deployed game connects to the supplied Supabase project. Google login is ena
    ```
 
    The publishable/anon key is intentionally included in the browser build. Never put service-role keys, database passwords, or OAuth secrets in VITE variables or this repository.
-2. Apply `backend/001-platform.sql` followed by `backend/002-status-snapshot.sql` in the target database. The `tumble_private` schema must not be exposed through the Data API. Tables use RLS; mutations go through narrowly granted RPCs.
+
+2. Apply `backend/001-platform.sql`, `backend/002-status-snapshot.sql`, then `backend/003-progression-shop.sql` in order. The third migration adds course thresholds, private progression, wallets, cosmetic ownership and bounded purchase/result RPCs. The `tumble_private` schema must not be exposed through the Data API. Tables use RLS; mutations go through narrowly granted RPCs.
 3. Configure Supabase Site URL and allowed redirects for the exact deployment root (including trailing slash) and local development URL. Configure Google/Apple secrets directly in the provider dashboard. Use the Supabase `/auth/v1/callback` URL as the provider callback. Email verification remains enabled. Enable `VITE_EMAIL_AUTH_ENABLED` only after SMTP delivery is configured and tested; the current release clearly offers Google registration/login and does not expose email forms that cannot send confirmation or reset emails.
 4. Assign the one owner only through the trusted database operator after confirming the intended user's verified identity. The account-specific bootstrap stays outside this public repository. `tumble_private.roles` enforces one owner; ordinary users cannot promote themselves. Use the studio for subsequent designer grants.
 
@@ -65,6 +75,6 @@ Requires Node 22.13+ and pnpm. Run `pnpm install --frozen-lockfile`.
 
 The automated public-party test uses an in-memory transport. SQL tests execute the actual migrations with isolated authenticated roles in PGlite. They do not substitute for load testing concurrent native PostgreSQL sessions, five separate devices, or restrictive-network testing. Live browser checks cover Google login, owner access, profile/cloud saves, staff search, publish/update/retire, matchmaking search/cancel, and responsive layouts. Browser emulation is not physical phone testing.
 
-GitHub Pages serves the main branch's `/docs` directory. Build, replace the contents of `docs/` with `web-dist/`, retain `docs/.nojekyll`, and commit. The included `vercel.json` also supports a Vercel static deployment; set the same public environment values there before building. Refresh all players after this release: protocol 3 uses a new private-room prefix.
+GitHub Pages serves the main branch's `/docs` directory. Build, replace the contents of `docs/` with `web-dist/`, retain `docs/.nojekyll`, and commit. The included `vercel.json` also supports a Vercel static deployment; set the same public environment values there before building. Refresh all players after this release: protocol 4 includes kick input and ability cooldowns and uses a new private-room prefix.
 
 The game uses original courses, toy racers, visuals and synthesized sounds, with no Fall Guys assets, branding or source code. The original cosmic background was generated for this project, inspired by the user's neon space reference.

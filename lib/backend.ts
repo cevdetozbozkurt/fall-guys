@@ -5,6 +5,7 @@ import {
 } from '@supabase/supabase-js';
 import { parseRecipe, type CourseRecipe } from './course-builder.ts';
 import { normalizeCosmetics, type Cosmetics } from './cosmetics.ts';
+import { parseProgression, type Progression } from './progression.ts';
 export {
   normalizeCosmetics,
   DEFAULT_COSMETICS,
@@ -429,6 +430,17 @@ export class GameBackend {
     return parseQueueStatus(
       await this.rpc('tc_queue_tick', { p_peer_id: peerId, p_join: join }),
     );
+  }
+  async progression(): Promise<Progression> {
+    return parseProgression(await this.rpc('tc_progress'));
+  }
+  async recordFinish(course: number, time: number): Promise<Progression> {
+    return parseProgression(
+      await this.rpc('tc_course_finish', { p_course: course, p_time: time }),
+    );
+  }
+  async buyCosmetic(item: string): Promise<Progression> {
+    return parseProgression(await this.rpc('tc_shop_buy', { p_item: item }));
   }
   async cancelQueue(): Promise<QueueStatus> {
     return parseQueueStatus(await this.rpc('tc_queue_cancel'));

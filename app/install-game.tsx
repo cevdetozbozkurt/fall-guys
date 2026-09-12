@@ -5,7 +5,7 @@ type InstallEvent = Event & {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: string }>;
 };
-export default function InstallGame() {
+export function useGameInstall() {
   const [prompt, setPrompt] = useState<InstallEvent | null>(null);
   const [installed, setInstalled] = useState(
     () =>
@@ -32,19 +32,49 @@ export default function InstallGame() {
       window.removeEventListener('appinstalled', done);
     };
   }, []);
-  if (installed || !prompt) return null;
+  return {
+    installed,
+    prompt,
+    install: async () => {
+      if (prompt) {
+        await prompt.prompt();
+        await prompt.userChoice;
+        setPrompt(null);
+      }
+    },
+  };
+}
+export default function InstallGame({
+  controller,
+}: {
+  controller: ReturnType<typeof useGameInstall>;
+}) {
+  const [help, setHelp] = useState(false);
+  if (controller.installed)
+    return (
+      <p className="tc-muted">
+        Game installed · ready to launch from your home screen.
+      </p>
+    );
   return (
-    <button
-      className="install-game tc-secondary"
-      onClick={() => {
-        void prompt
-          .prompt()
-          .then(() => prompt.userChoice)
-          .then(() => setPrompt(null));
-      }}
-    >
-      <Download size={17} />
-      Install game
-    </button>
+    <div className="install-menu">
+      <button
+        className="tc-secondary"
+        onClick={() => {
+          if (controller.prompt) void controller.install();
+          else setHelp(!help);
+        }}
+      >
+        <Download size={17} />
+        Install game
+      </button>
+      {help && (
+        <output>
+          On iPhone or iPad, open this game in Safari. Tap Share → Add to Home
+          Screen → Add. If shown, leave “Open as Web App” on. On Android or
+          desktop, use your browser menu → Install app or Add to Home Screen.
+        </output>
+      )}
+    </div>
   );
 }

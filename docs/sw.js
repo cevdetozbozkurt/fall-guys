@@ -1,5 +1,5 @@
-const VERSION = "tumble-club-2fd89d24df74";
-const PRECACHE = ["./","./manifest.webmanifest","./icon-192.png","./icon-512.png","./cosmos.webp","./assets/bundler-DHskWYbv.js","./assets/cosmos-CNUOFipv.webp","./assets/index-BdcVIGay.css","./assets/index-DrNuyoAr.js","./assets/match-peer-BUnasdxa.js","./assets/multiplayer-D8VS6Yzp.js","./assets/scene-Bc3YBA0R.js"];
+const VERSION = "tumble-club-ab11d57cac6d";
+const PRECACHE = ["./","./manifest.webmanifest","./icon-192.png","./icon-512.png","./cosmos.webp","./assets/avatar-2I5ax88q.js","./assets/avatar-view-CkDgH5tY.js","./assets/bundler-BEDDKW0l.js","./assets/cosmos-CNUOFipv.webp","./assets/index-02alk9Yi.css","./assets/index-DACRTWXW.js","./assets/match-peer-Dy58SQMt.js","./assets/multiplayer-q_pr2n5f.js","./assets/scene-zJ_mj1tO.js"];
 self.addEventListener('install', (event) =>
   event.waitUntil(caches.open(VERSION).then((cache) => cache.addAll(PRECACHE))),
 );
