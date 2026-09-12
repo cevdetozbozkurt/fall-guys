@@ -1,5 +1,23 @@
 import Peer, { type DataConnection } from 'peerjs';
 import {
+  normalizeCosmetics,
+  DEFAULT_COSMETICS,
+  OUTFIT_COLORS,
+  type Cosmetics,
+} from './cosmetics.ts';
+import type { MatchAssignment } from './backend';
+import type { MatchPeer } from './match-peer';
+export type PublicConnection = {
+  lease: MatchPeer;
+  assignment: MatchAssignment;
+  validate: (
+    userId: string,
+    ticket: string,
+    peerId: string,
+  ) => Promise<{ accepted: boolean; userId?: string; slot?: number }>;
+  start: () => Promise<unknown>;
+};
+import {
   Simulation,
   EMPTY_INPUT,
   type Input,
@@ -15,7 +33,14 @@ import {
   type CourseRecipe,
 } from './course-builder.ts';
 
-export type Member = { id: number; name: string; color: number; host: boolean };
+export type Member = {
+  id: number;
+  name: string;
+  color: number;
+  host: boolean;
+  cosmetics?: Cosmetics;
+  userId?: string;
+};
 export type PartyView = {
   status:
     | 'offline'
@@ -25,6 +50,7 @@ export type PartyView = {
     | 'finished'
     | 'error';
   code: string;
+  publicMatch?: boolean;
   host: boolean;
   self: number;
   members: Member[];
@@ -79,7 +105,7 @@ export const cleanName = (value: unknown) =>
         .filter((c) => c.charCodeAt(0) > 31 && c.charCodeAt(0) !== 127)
         .join('')
         .trim()
-        .slice(0, 20) || 'Tumbler'
+        .slice(0, 24) || 'Tumbler'
     : 'Tumbler';
 export function makeCode() {
   return Array.from(
@@ -156,15 +182,18 @@ export function isWorld(value: unknown): value is WorldPacket {
           'finished',
           'falls',
           'checkpoint',
+          'progress',
           'diveTime',
           'stun',
           'speed',
           'finishTime',
         ].every((k) => Number.isFinite(r[k as keyof Racer])) &&
-        Math.abs(r.x) < 100 &&
-        Math.abs(r.z) < 500 &&
+        Math.abs(r.x) < 1500 &&
+        Math.abs(r.z) < 1500 &&
         Math.abs(r.y) < 100 &&
-        typeof r.sliding === 'boolean',
+        typeof r.sliding === 'boolean' &&
+        typeof r.lane === 'string' &&
+        r.lane.length < 64,
     ) &&
     Array.isArray(v.tiles) &&
     v.tiles.length < 200 &&
@@ -240,6 +269,10 @@ export class Party {
   intermissionEnd = 0;
   clock: () => number;
   reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  online?: PublicConnection;
+  peerCleanup: (() => void)[] = [];
+  startingPublic = false;
+  publicRetryAt = 0;
   constructor(
     sim: Simulation,
     callbacks: Callbacks,
@@ -253,23 +286,35 @@ export class Party {
     this.view = { ...this.view, ...change };
     this.callbacks.change({ ...this.view, members: [...this.view.members] });
   }
-  connect(host: boolean, name: string, color: number, code = '') {
+  connect(
+    host: boolean,
+    name: string,
+    color: number,
+    code = '',
+    cosmetics: Cosmetics = DEFAULT_COSMETICS,
+    online?: PublicConnection,
+  ) {
+    this.online = online;
     this.closed = false;
     this.emit({
       status: 'connecting',
       host,
-      code: host ? makeCode() : cleanCode(code),
+      code:
+        online?.assignment.roomCode ?? (host ? makeCode() : cleanCode(code)),
+      publicMatch: !!online,
       error: '',
       members: [],
       self: 0,
     });
-    if (!host && this.view.code.length !== 8) {
+    if (!online && !host && this.view.code.length !== 8) {
       this.fail('Enter the eight-character room code from your friend.');
       return;
     }
-    this.peer = host
-      ? new Peer(`tumble-club-v2-${this.view.code}`, { debug: 0 })
-      : new Peer({ debug: 0 });
+    this.peer =
+      online?.lease.peer ??
+      (host
+        ? new Peer(`tumble-club-v3-${this.view.code}`, { debug: 0 })
+        : new Peer({ debug: 0 }));
     this.timer = setTimeout(
       () =>
         this.fail(
@@ -277,7 +322,7 @@ export class Party {
         ),
       20000,
     );
-    this.peer.on('error', (err) => {
+    const onError = (err: { type: string }) => {
       const type = err.type;
       if (this.view.status !== 'connecting') {
         this.emit({
@@ -294,8 +339,10 @@ export class Party {
             ? 'That room code is already in use. Try creating another room.'
             : 'The multiplayer connection failed. Try again, or try another network.',
       );
-    });
-    this.peer.on('disconnected', () => {
+    };
+    this.peer.on('error', onError);
+    this.peerCleanup.push(() => this.peer?.off('error', onError));
+    const onDisconnected = () => {
       if (!this.closed) {
         this.emit({
           error:
@@ -303,8 +350,10 @@ export class Party {
         });
         this.reconnectDirectory();
       }
-    });
-    this.peer.on('open', () => {
+    };
+    this.peer.on('disconnected', onDisconnected);
+    this.peerCleanup.push(() => this.peer?.off('disconnected', onDisconnected));
+    const onOpen = () => {
       if (this.closed) return;
       if (this.view.status !== 'connecting') {
         this.emit({ error: '' });
@@ -315,24 +364,48 @@ export class Party {
         this.sim.reset(this.sim.course);
         this.view.self = 0;
         this.view.members = [
-          { id: 0, name: cleanName(name), color, host: true },
+          {
+            id: 0,
+            name: cleanName(name),
+            color,
+            host: true,
+            cosmetics: normalizeCosmetics({
+              ...cosmetics,
+              color: OUTFIT_COLORS[color],
+            }),
+            userId: online?.assignment.userId,
+          },
         ];
         this.sim.setHumans([0]);
         this.callbacks.prepare(this.sim.course);
         this.emit({ status: 'waiting' });
         this.callbacks.roster(this.view.members, 0);
       } else {
-        const c = this.peer!.connect(`tumble-club-v2-${this.view.code}`, {
-          reliable: true,
-          serialization: 'json',
-        });
+        const c = this.peer!.connect(
+          online?.assignment.hostPeerId ?? `tumble-club-v3-${this.view.code}`,
+          {
+            reliable: true,
+            serialization: 'json',
+          },
+        );
         this.server = c;
         c.on('open', () =>
           this.send(c, {
             type: 'join',
             name: cleanName(name),
             color,
-            protocol: 2,
+            protocol: 3,
+            cosmetics: normalizeCosmetics({
+              ...cosmetics,
+              color: OUTFIT_COLORS[color],
+            }),
+            ...(online
+              ? {
+                  matchId: online.assignment.matchId,
+                  userId: online.assignment.userId,
+                  ticket: online.assignment.ticket,
+                }
+              : {}),
           }),
         );
         c.on('data', (data) => this.receiveHost(data));
@@ -349,21 +422,25 @@ export class Party {
             );
         });
       }
-    });
-    this.peer.on('connection', (c) => {
-      if (!host) {
+    };
+    this.peer.on('open', onOpen);
+    this.peerCleanup.push(() => this.peer?.off('open', onOpen));
+    const onConnection = (c: DataConnection, queued: unknown[] = []) => {
+      if (!host || this.closed) {
         c.close();
         return;
       }
-      let id = -1;
+      let id = -1,
+        admitting = false;
       const timeout = setTimeout(() => {
         if (id < 0) c.close();
       }, 10000);
-      c.on('data', (data) => {
-        if (!data || typeof data !== 'object') return;
+      const receive = async (data: unknown) => {
+        if (this.closed || !data || typeof data !== 'object') return;
         const m = data as Record<string, unknown>;
         if (id < 0) {
-          if (m.type !== 'join' || m.protocol !== 2) {
+          if (admitting) return;
+          if (m.type !== 'join' || m.protocol !== 3) {
             this.send(c, {
               type: 'error',
               message: 'Please reload the game before joining.',
@@ -379,19 +456,56 @@ export class Party {
             setTimeout(() => c.close(), 150);
             return;
           }
-          id = Array.from({ length: 8 }, (_, i) => i).find(
-            (n) => !this.view.members.some((member) => member.id === n),
-          )!;
+          const verified = online?.assignment.members.find(
+            (member) => member.userId === m.userId,
+          );
+          if (online) {
+            if (
+              m.matchId !== online.assignment.matchId ||
+              typeof m.userId !== 'string' ||
+              typeof m.ticket !== 'string' ||
+              !verified
+            ) {
+              c.close();
+              return;
+            }
+            admitting = true;
+            try {
+              const check = await online.validate(m.userId, m.ticket, c.peer);
+              if (
+                !check.accepted ||
+                check.slot !== verified.slot ||
+                this.closed ||
+                !c.open ||
+                this.view.members.some((member) => member.id === check.slot)
+              ) {
+                c.close();
+                return;
+              }
+              id = check.slot!;
+            } catch {
+              c.close();
+              return;
+            } finally {
+              admitting = false;
+            }
+          } else
+            id = Array.from({ length: 8 }, (_, i) => i).find(
+              (n) => !this.view.members.some((member) => member.id === n),
+            )!;
           clearTimeout(timeout);
           this.connections.set(id, c);
           this.view.members.push({
             id,
-            name: cleanName(m.name),
-            color:
-              typeof m.color === 'number' &&
-              Number.isInteger(m.color) &&
-              m.color >= 0 &&
-              m.color < 6
+            name: cleanName(verified?.username ?? m.name),
+            cosmetics: normalizeCosmetics(verified?.cosmetics ?? m.cosmetics),
+            userId: verified?.userId,
+            color: verified
+              ? OUTFIT_COLORS.indexOf(verified.cosmetics.color)
+              : typeof m.color === 'number' &&
+                  Number.isInteger(m.color) &&
+                  m.color >= 0 &&
+                  m.color < 6
                 ? m.color
                 : id % 6,
             host: false,
@@ -413,8 +527,10 @@ export class Party {
             this.send(c, this.worldPacket());
           }
           this.roster();
+          void this.startPublicWhenReady();
           return;
         }
+        if (this.connections.get(id) !== c) return;
         if (m.type === 'leave') {
           c.close();
           return;
@@ -463,10 +579,14 @@ export class Party {
           this.sim.respawn(this.sim.racers[id]);
           this.respawnTimes.set(id, performance.now());
         }
+      };
+      c.on('data', (data) => {
+        void receive(data);
       });
+      for (const data of queued) void receive(data);
       c.on('close', () => {
         clearTimeout(timeout);
-        if (id >= 0 && !this.closed) {
+        if (id >= 0 && !this.closed && this.connections.get(id) === c) {
           this.connections.delete(id);
           this.view.members = this.view.members.filter((p) => p.id !== id);
           this.sim.humanIds.delete(id);
@@ -479,7 +599,74 @@ export class Party {
         }
       });
       c.on('error', () => c.close());
-    });
+    };
+    this.peer.on('connection', onConnection);
+    this.peerCleanup.push(() => this.peer?.off('connection', onConnection));
+    if (online) {
+      // Establish the host roster before replaying already-buffered admissions.
+      if (this.peer.open) onOpen();
+      for (const item of online.lease.take())
+        onConnection(item.connection, item.messages);
+    }
+  }
+  async startPublicWhenReady() {
+    if (
+      this.closed ||
+      !this.online ||
+      !this.view.host ||
+      this.round > 0 ||
+      this.startingPublic ||
+      (this.view.members.length !== 5 &&
+        this.online.assignment.phase !== 'playing') ||
+      this.clock() < this.publicRetryAt
+    )
+      return;
+    this.startingPublic = true;
+    try {
+      await this.online.start();
+      if (!this.closed)
+        this.start(
+          Math.floor(Math.random() * COURSES.length),
+          this.view.members.length < 2,
+        );
+    } catch {
+      this.publicRetryAt = this.clock() + 3000;
+      if (!this.closed)
+        this.emit({ error: 'Waiting for all five racers to connect…' });
+    } finally {
+      this.startingPublic = false;
+    }
+  }
+  updateAssignment(assignment: PublicConnection['assignment']) {
+    if (
+      this.closed ||
+      !this.online ||
+      assignment.matchId !== this.online.assignment.matchId
+    )
+      return;
+    this.online.assignment = assignment;
+    const allowed = new Set(assignment.members.map((m) => m.userId));
+    if (!allowed.has(assignment.userId)) {
+      this.fail(
+        'Your place in this game expired. Search again to join a new crew.',
+      );
+      return;
+    }
+    if (!this.view.host) return;
+    for (const member of this.view.members) {
+      if (!member.host && !allowed.has(member.userId ?? '')) {
+        const connection = this.connections.get(member.id);
+        this.connections.delete(member.id);
+        connection?.close();
+        this.view.members = this.view.members.filter((m) => m.id !== member.id);
+        this.sim.humanIds.delete(member.id);
+        this.sim.humanInputs.delete(member.id);
+        this.inputTimes.delete(member.id);
+        this.inputSequences.delete(member.id);
+      }
+    }
+    this.roster();
+    void this.startPublicWhenReady();
   }
   validRoster(m: unknown): m is Member[] {
     return (
@@ -494,7 +681,7 @@ export class Party {
           p.id >= 0 &&
           p.id < 8 &&
           typeof p.name === 'string' &&
-          p.name.length <= 20 &&
+          p.name.length <= 24 &&
           Number.isInteger(p.color) &&
           p.color >= 0 &&
           p.color < 6,
@@ -714,6 +901,7 @@ export class Party {
     if (this.closed) return;
     const now = this.clock();
     if (this.view.host) {
+      if (this.online && this.round === 0) void this.startPublicWhenReady();
       for (const [id, t] of this.inputTimes)
         if (now - t > 350) this.sim.humanInputs.set(id, { ...EMPTY_INPUT });
       this.sim.step(dt);
@@ -881,11 +1069,11 @@ export class Party {
   }
   fail(reason: string) {
     if (this.closed) return;
-    this.close(false);
+    this.close(false, !!this.online);
     this.emit({ status: 'error', error: reason });
     this.callbacks.ended(reason);
   }
-  close(notify = true) {
+  close(notify = true, preservePeer = false) {
     this.closed = true;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.nextCourse = null;
@@ -896,7 +1084,10 @@ export class Party {
       this.send(this.server, { type: 'leave' });
       this.server.close();
     }
-    this.peer?.destroy();
+    for (const cleanup of this.peerCleanup) cleanup();
+    this.peerCleanup = [];
+    if (preservePeer && this.online) this.online.lease.resume();
+    else this.peer?.destroy();
     this.peer = null;
     this.sim.multiplayer = false;
     this.sim.playerId = 0;

@@ -1,5 +1,6 @@
 import { COURSES, type Course, type Obstacle } from './courses.ts';
 import { platformHeight } from './course-builder.ts';
+import { toLocal, toWorld, routeAt, projectRoute } from './routes.ts';
 
 export type Input = { x: number; z: number; jump: boolean; dive: boolean };
 export type Racer = {
@@ -14,6 +15,8 @@ export type Racer = {
   coyote: number;
   jumpBuffer: number;
   checkpoint: number;
+  progress: number;
+  lane: string;
   invincible: number;
   stun: number;
   diveTime: number;
@@ -30,7 +33,7 @@ export const EMPTY_INPUT: Input = { x: 0, z: 0, jump: false, dive: false };
 export const clamp = (v: number, a: number, b: number) =>
   Math.max(a, Math.min(b, v));
 
-export function obstaclePose(o: Obstacle, t: number) {
+function localObstaclePose(o: Obstacle, t: number) {
   const phase = t * (o.speed ?? 1) + (o.phase ?? 0);
   const base = o.y ?? 0;
   if (o.type === 'falling') {
@@ -54,19 +57,28 @@ export function obstaclePose(o: Obstacle, t: number) {
     };
   }
   if (o.type === 'bumper')
-    return { x: o.x + Math.sin(phase) * 3.8, y: 1, z: o.z, angle: 0 };
+    return { x: o.x + Math.sin(phase) * 3.8, y: base + 1, z: o.z, angle: 0 };
   if (o.type === 'pendulum') {
     const a = Math.sin(phase) * 0.87;
     return {
       x: o.x + Math.sin(a) * 7,
-      y: 8 - Math.cos(a) * 7,
+      y: base + 8 - Math.cos(a) * 7,
       z: o.z,
       angle: a,
     };
   }
   if (o.type === 'pusher')
     return { x: o.x + Math.sin(phase) * 3.2, y: 1, z: o.z, angle: 0 };
-  return { x: o.x, y: 0.65, z: o.z, angle: phase };
+  return { x: o.x, y: base + 0.65, z: o.z, angle: phase };
+}
+
+export function obstaclePose(o: Obstacle, t: number) {
+  const p = localObstaclePose({ ...o, x: 0, z: 0 }, t);
+  return {
+    ...p,
+    ...toWorld(o, p.x, p.z),
+    angle: o.type === 'bar' ? p.angle - (o.yaw ?? 0) : p.angle,
+  };
 }
 
 export class Simulation {
@@ -117,6 +129,8 @@ export class Simulation {
       coyote: 0.1,
       jumpBuffer: 0,
       checkpoint: 0,
+      progress: id === 0 ? 1 : -1 - Math.floor((id - 1) / 4) * 1.7,
+      lane: 'start',
       invincible: 1,
       stun: 0,
       diveTime: 0,
@@ -149,7 +163,8 @@ export class Simulation {
       1 +
         this.racers.filter(
           (r) =>
-            r.id !== this.playerId && (r.finished > 0 || r.z > this.player.z),
+            r.id !== this.playerId &&
+            (r.finished > 0 || r.progress > this.player.progress),
         ).length
     );
   }
@@ -157,11 +172,12 @@ export class Simulation {
     let result = -1,
       highest = -Infinity;
     this.course.platforms.forEach((p, i) => {
-      const h = platformHeight(p, z),
+      const local = toLocal(p, x, z);
+      const h = platformHeight(p, z, x),
         age = this.worldTime - (this.tiles.get(i) ?? Infinity);
       if (
-        Math.abs(x - p.x) <= p.w / 2 + 0.08 &&
-        Math.abs(z - p.z) <= p.d / 2 + 0.08 &&
+        Math.abs(local.x) <= p.w / 2 + 0.08 &&
+        Math.abs(local.z) <= p.d / 2 + 0.08 &&
         !(age > 0.7 && age < 3.4) &&
         h <= maxY + 0.12 &&
         h > highest
@@ -174,54 +190,70 @@ export class Simulation {
   }
   height(x: number, z: number) {
     const i = this.support(x, z);
-    return i < 0 ? -Infinity : platformHeight(this.course.platforms[i], z);
+    return i < 0 ? -Infinity : platformHeight(this.course.platforms[i], z, x);
   }
   botInput(r: Racer): Input {
-    let target = ((r.id % 5) - 2) * 1.2;
-    const next = this.course.platforms
-      .filter((p) => p.z + p.d / 2 > r.z + 4 && p.z - p.d / 2 < r.z + 5)
-      .sort((a, b) => Math.abs(a.x - r.x) - Math.abs(b.x - r.x))[0];
-    if (next)
-      target = clamp(target, next.x - next.w / 2 + 1, next.x + next.w / 2 - 1);
-    let jump = this.support(r.x, r.z + 2.4) < 0;
-    const aheadSupport = this.support(r.x, r.z + 2.2);
+    const branch = this.course.routes?.find(
+      (l) =>
+        l.id.endsWith(r.id % 2 ? 'easy' : 'hard') &&
+        l.points[0].progress <= r.progress + 5 &&
+        l.points[l.points.length - 1].progress > r.progress + 5,
+    )?.id;
+    const frame = routeAt(this.course, r.progress + 4.5, branch ?? r.lane);
+    const here = routeAt(this.course, r.progress, branch ?? r.lane);
+    const support = this.support(frame.x, frame.z);
+    const halfWidth =
+      support < 0 ? 3 : Math.max(1, this.course.platforms[support].w / 2 - 1.2);
+    let lateral = 0;
+    const ahead = toWorld({ x: r.x, z: r.z, yaw: here.yaw }, 0, 2.35);
+    const aheadSupport = this.support(ahead.x, ahead.z);
+    let jump = aheadSupport < 0;
     if (
       aheadSupport >= 0 &&
       this.course.platforms[aheadSupport].endY === undefined &&
-      this.height(r.x, r.z + 2.2) > r.y + 0.5
+      this.height(ahead.x, ahead.z) > r.y + 0.5
     )
       jump = true;
     for (const o of this.course.obstacles) {
-      const p = obstaclePose(o, this.worldTime);
-      const dist = o.z - r.z;
+      const pose = obstaclePose(o, this.worldTime),
+        rel = toLocal({ x: r.x, z: r.z, yaw: here.yaw }, pose.x, pose.z);
       if (
-        dist > -3.2 &&
-        dist < 7 &&
-        (o.type === 'bumper' ||
-          o.type === 'pendulum' ||
-          o.type === 'pusher' ||
-          o.type === 'hammer' ||
-          o.type === 'falling')
-      )
-        target = clamp(p.x + (r.x < p.x ? -3.6 : 3.6), -5.5, 5.5);
-      if (o.type === 'hurdle' && dist > 0 && dist < 2.9) jump = true;
-      if (
-        o.type === 'bar' &&
-        Math.abs(dist) < (o.radius ?? 5) + 1 &&
-        this.worldTime - r.lastJump > 1.05
-      )
-        jump = true;
+        rel.z > -2 &&
+        rel.z < 8 &&
+        ['bumper', 'pendulum', 'pusher', 'hammer', 'falling'].includes(o.type)
+      ) {
+        const future = obstaclePose(
+          o,
+          this.worldTime + clamp(rel.z / r.speed, 0, 0.8),
+        );
+        const local = toLocal(here, future.x, future.z);
+        if (future.y < r.y + 3.5 && future.y > r.y - 2)
+          lateral = clamp(
+            local.x + (local.x > 0 ? -3.3 : 3.3),
+            -halfWidth,
+            halfWidth,
+          );
+      }
+      if (o.type === 'hurdle' && rel.z > 0 && rel.z < 3.1) jump = true;
     }
-    const ahead = this.course.platforms.find(
-      (p) => Math.abs(r.z + 3 - p.z) <= p.d / 2 && p.w < 8,
-    );
-    if (ahead) target = clamp(target, -1.4, 1.4);
-    return {
-      x: clamp((target - r.x) * 1.7, -1, 1),
-      z: 1,
-      jump: jump && r.grounded,
-      dive: false,
-    };
+    const target = toWorld(frame, lateral, 0),
+      dx = target.x - r.x,
+      dz = target.z - r.z,
+      len = Math.max(1, Math.hypot(dx, dz));
+    const direction = { x: dx / len, z: dz / len };
+    for (const o of this.course.obstacles) {
+      if (o.type !== 'bar') continue;
+      for (const t of [0.15, 0.23, 0.31]) {
+        const p = obstaclePose(o, this.worldTime + t);
+        const x = r.x + direction.x * r.speed * t - p.x,
+          z = r.z + direction.z * r.speed * t - p.z;
+        const ux = Math.cos(p.angle),
+          uz = Math.sin(p.angle),
+          along = clamp(x * ux + z * uz, -(o.radius ?? 5), o.radius ?? 5);
+        if (Math.hypot(x - ux * along, z - uz * along) < 1.05) jump = true;
+      }
+    }
+    return { ...direction, jump: jump && r.grounded, dive: false };
   }
   step(dt: number) {
     if (this.paused) return;
@@ -277,9 +309,23 @@ export class Simulation {
       if (r.id === this.playerId) this.events.push('jump');
     }
     if (input.dive && !r.grounded && !r.dived && r.y > 0) {
-      const len = Math.hypot(input.x, input.z) || 1;
-      r.vx += (input.x / len) * 6;
-      r.vz += (input.z === 0 ? 1 : input.z / len) * 6;
+      const direction =
+        Math.hypot(input.x, input.z) > 0
+          ? input
+          : Math.hypot(r.vx, r.vz) > 0.5
+            ? { x: r.vx, z: r.vz }
+            : toWorld(
+                {
+                  x: 0,
+                  z: 0,
+                  yaw: routeAt(this.course, r.progress, r.lane).yaw,
+                },
+                0,
+                1,
+              );
+      const len = Math.hypot(direction.x, direction.z) || 1;
+      r.vx += (direction.x / len) * 6;
+      r.vz += (direction.z / len) * 6;
       r.vy = Math.max(r.vy, 2);
       r.dived = true;
       r.diveTime = 0.5;
@@ -302,22 +348,30 @@ export class Simulation {
     r.y += r.vy * dt;
     // Solid ledge faces require a jump; gradual ramps can be walked up.
     for (const p of this.course.platforms) {
-      if (Math.abs(r.x - p.x) > p.w / 2 || Math.abs(r.z - p.z) > p.d / 2)
-        continue;
-      if (platformHeight(p, r.z) <= Math.max(prevY, r.y) + 0.35) continue;
-      if (Math.abs(prevZ - p.z) >= p.d / 2) {
-        r.z = prevZ;
-        r.vz = 0;
+      const pos = toLocal(p, r.x, r.z),
+        prev = toLocal(p, prevX, prevZ);
+      if (Math.abs(pos.x) > p.w / 2 || Math.abs(pos.z) > p.d / 2) continue;
+      if (platformHeight(p, r.z, r.x) <= Math.max(prevY, r.y) + 0.35) continue;
+      const velocity = toLocal({ x: 0, z: 0, yaw: p.yaw }, r.vx, r.vz);
+      if (Math.abs(prev.z) >= p.d / 2) {
+        pos.z = prev.z;
+        velocity.z = 0;
       }
-      if (Math.abs(prevX - p.x) >= p.w / 2) {
-        r.x = prevX;
-        r.vx = 0;
+      if (Math.abs(prev.x) >= p.w / 2) {
+        pos.x = prev.x;
+        velocity.x = 0;
       }
+      const resolved = toWorld(p, pos.x, pos.z),
+        v = toWorld({ x: 0, z: 0, yaw: p.yaw }, velocity.x, velocity.z);
+      r.x = resolved.x;
+      r.z = resolved.z;
+      r.vx = v.x;
+      r.vz = v.z;
     }
     const support = this.support(r.x, r.z, Math.max(prevY, r.y) + 0.3);
     const floor =
       support >= 0
-        ? platformHeight(this.course.platforms[support], r.z)
+        ? platformHeight(this.course.platforms[support], r.z, r.x)
         : -Infinity;
     r.sliding = false;
     if (
@@ -333,14 +387,23 @@ export class Simulation {
       const p = this.course.platforms[support];
       if (p.kind === 'slide') {
         r.sliding = true;
-        r.vz = Math.min(19, r.vz + 34 * dt);
-        r.z += 4 * dt;
+        const yaw = p.yaw ?? 0,
+          forward = r.vx * Math.sin(yaw) + r.vz * Math.cos(yaw),
+          push = Math.min(19, forward + 34 * dt) - forward;
+        r.vx += push * Math.sin(yaw);
+        r.vz += push * Math.cos(yaw);
+        r.x += 4 * dt * Math.sin(yaw);
+        r.z += 4 * dt * Math.cos(yaw);
       }
-      if (p.kind === 'belt') r.x += (p.direction ?? 1) * 3 * dt;
+      if (p.kind === 'belt') {
+        const push = (p.direction ?? 1) * 3 * dt;
+        r.x += push * Math.cos(p.yaw ?? 0);
+        r.z -= push * Math.sin(p.yaw ?? 0);
+      }
       if (p.kind === 'crumble' && !this.tiles.has(support))
         this.tiles.set(support, this.worldTime);
     } else r.grounded = false;
-    if (r.y < -10 || r.z < -12 || Math.abs(r.x) > 30) {
+    if (r.y < -10 || Math.abs(r.z) > 1500 || Math.abs(r.x) > 1500) {
       this.respawn(r);
       return;
     }
@@ -350,14 +413,38 @@ export class Simulation {
           break;
         }
       }
-    if (r.grounded)
+    const projected = projectRoute(this.course, r.x, r.z, r.progress, r.lane);
+    if (projected.distance < 18) {
+      r.progress = projected.progress;
+      r.lane = projected.lane;
+    }
+    const nextGate = this.course.gates?.find(
+      (g) => g.progress > r.checkpoint && g.progress < this.course.length,
+    );
+    if (nextGate && r.y >= -0.2 && r.y < 10) {
+      const local = toLocal(nextGate, r.x, r.z);
+      if (
+        local.z >= 0 &&
+        local.z < 8 &&
+        Math.abs(local.x) <= nextGate.halfWidth &&
+        r.progress >= nextGate.progress - 1
+      ) {
+        r.checkpoint = nextGate.progress;
+        if (r.id === this.playerId) this.events.push('checkpoint');
+      }
+    }
+    if (!this.course.gates && r.grounded)
       for (const cp of this.course.checkpoints)
-        if (r.z >= cp && r.checkpoint < cp) {
-          r.checkpoint = cp;
-          if (r.id === this.playerId) this.events.push('checkpoint');
-        }
+        if (r.z >= cp) r.checkpoint = Math.max(r.checkpoint, cp);
+    const finishGate = this.course.gates?.at(-1),
+      finish = finishGate
+        ? toLocal(finishGate, r.x, r.z)
+        : { x: r.x, z: r.z - this.course.length };
     if (
-      r.z >= this.course.length &&
+      finish.z >= 0 &&
+      finish.z < 8 &&
+      Math.abs(finish.x) < (finishGate?.halfWidth ?? 8) &&
+      r.checkpoint >= (this.course.checkpoints.at(-1) ?? 0) &&
       r.y >= floor &&
       r.y < floor + 2.5 &&
       support >= 0
@@ -384,16 +471,22 @@ export class Simulation {
         along = clamp(dx * ux + dz * uz, -(o.radius ?? 5), o.radius ?? 5);
       nx = dx - ux * along;
       nz = dz - uz * along;
-      hit = Math.hypot(nx, nz) < 0.87 && r.y < 1.08;
+      hit = Math.hypot(nx, nz) < 0.87 && r.y - (o.y ?? 0) < 1.08;
     } else if (o.type === 'hurdle' || o.type === 'pusher') {
       const width = o.width ?? 4;
+      const local = toLocal({ x: p.x, z: p.z, yaw: o.yaw }, r.x, r.z);
       hit =
-        Math.abs(dx) < width / 2 + 0.45 &&
-        Math.abs(dz) < 0.9 &&
-        r.y < (o.type === 'hurdle' ? 0.9 : 2);
+        Math.abs(local.x) < width / 2 + 0.45 &&
+        Math.abs(local.z) < 0.9 &&
+        r.y - (o.y ?? 0) < (o.type === 'hurdle' ? 0.9 : 2);
       if (hit) {
-        nx = Math.abs(dx) > width / 2 ? Math.sign(dx) : 0;
-        nz = Math.sign(dz) || -1;
+        const normal = toWorld(
+          { x: 0, z: 0, yaw: o.yaw },
+          Math.abs(local.x) > width / 2 ? Math.sign(local.x) : 0,
+          Math.sign(local.z) || -1,
+        );
+        nx = normal.x;
+        nz = normal.z;
       }
     } else {
       hit =
@@ -414,8 +507,12 @@ export class Simulation {
     return true;
   }
   respawn(r: Racer) {
-    r.x = r.id === 0 ? 0 : ((r.id % 3) - 1) * 1.2;
-    r.z = r.checkpoint || 1;
+    const frame = routeAt(this.course, r.checkpoint || 1);
+    const point = toWorld(frame, r.id === 0 ? 0 : ((r.id % 3) - 1) * 1.2, 0);
+    r.x = point.x;
+    r.z = point.z;
+    r.progress = r.checkpoint || 1;
+    r.lane = frame.lane;
     r.y = 1;
     r.vx = 0;
     r.vz = 0;

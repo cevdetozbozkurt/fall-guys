@@ -1,5 +1,6 @@
 'use client';
 import { useMemo, useState } from 'react';
+import RouteMap from './course-map';
 import {
   ArrowDown,
   ArrowUp,
@@ -16,6 +17,10 @@ import {
   Waves,
   Zap,
   GripVertical,
+  CornerUpLeft,
+  CornerUpRight,
+  GitFork,
+  Route,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import {
@@ -46,9 +51,14 @@ const moduleIcons = [
   ArrowDown,
   ArrowUp,
   Copy,
+  CornerUpLeft,
+  CornerUpRight,
+  GitFork,
+  Route,
 ];
 type Props = {
   saved: CourseRecipe[];
+  cloud?: boolean;
   inParty: boolean;
   roomCourses: CourseRecipe[];
   draft: CourseRecipe;
@@ -56,13 +66,14 @@ type Props = {
   editingKey?: number;
   setEditingKey: (key?: number) => void;
   courseMessage: string;
-  onSave: (recipe: CourseRecipe, replaces?: number) => string;
-  onDelete: (key: number) => void;
+  onSave: (recipe: CourseRecipe, replaces?: number) => string | Promise<string>;
+  onDelete: (key: number) => void | Promise<void>;
   onTest: (recipe: CourseRecipe) => void;
   onAddToRoom: (recipe: CourseRecipe) => boolean;
 };
 export default function CourseEditor({
   saved,
+  cloud = false,
   inParty,
   roomCourses,
   draft,
@@ -76,6 +87,7 @@ export default function CourseEditor({
   onAddToRoom,
 }: Props) {
   const [message, setMessage] = useState('');
+  const [saving, setSaving] = useState(false);
   const [dragged, setDragged] = useState<number | null>(null);
   const course = useMemo(() => buildCourse(draft), [draft]);
   const valid = parseRecipe(draft);
@@ -91,14 +103,17 @@ export default function CourseEditor({
     next.splice(to, 0, next.splice(from, 1)[0]);
     update(next);
   };
-  const save = () => {
+  const save = async () => {
+    if (saving) return;
     if (!valid) {
       setMessage(
         `Enter a name and arrange ${MIN_SEGMENTS}–${MAX_SEGMENTS} sections.`,
       );
       return;
     }
-    const result = onSave(valid, editingKey);
+    setSaving(true);
+    const result = await onSave(valid, editingKey);
+    setSaving(false);
     setMessage(result);
     if (result.startsWith('Saved')) {
       setEditingKey(recipeKey(valid));
@@ -266,35 +281,20 @@ export default function CourseEditor({
             })}
           </ol>
           <div className="route-end">
-            <Flag size={15} /> FINISH · {course.length} m
+            <Flag size={15} /> FINISH · {Math.round(course.length)} m
           </div>
         </section>
       </div>
       <div className="elevation-preview">
-        <span>ELEVATION PREVIEW</span>
-        <svg
-          viewBox={`0 0 ${course.length + 15} 45`}
-          aria-label="Side view of the platforms and gaps in your custom course"
-          preserveAspectRatio="none"
-        >
-          {course.platforms.map((p, i) => (
-            <path
-              key={i}
-              d={`M ${p.z - p.d / 2 + 6} ${33 - (p.y ?? 0) * 3} L ${p.z + p.d / 2 + 6} ${33 - (p.endY ?? p.y ?? 0) * 3}`}
-              stroke={
-                p.kind === 'slide'
-                  ? '#4fe4fa'
-                  : p.kind === 'crumble'
-                    ? '#ff87df'
-                    : '#b28aff'
-              }
-              strokeWidth="3"
-            />
-          ))}
-        </svg>
+        <span>ROUTE PREVIEW · WHITE START / GOLD FINISH</span>
+        <RouteMap course={course} />
       </div>
       <div className="editor-actions">
-        <button className="play-button" disabled={!valid} onClick={save}>
+        <button
+          className="play-button"
+          disabled={!valid || saving}
+          onClick={() => void save()}
+        >
           <Save size={18} /> SAVE COURSE
         </button>
         <button
@@ -321,7 +321,9 @@ export default function CourseEditor({
         </button>
       </div>
       <p className="editor-hint">
-        Saved courses stay on this device.{' '}
+        {cloud
+          ? 'Saved courses follow your account.'
+          : 'Guest courses stay on this device.'}{' '}
         {inParty
           ? 'Add your course to this room so everyone can race it. Solo testing is available outside a room.'
           : 'Create or join a friend room to add your courses to its rotation.'}
@@ -365,7 +367,13 @@ export default function CourseEditor({
                 className="icon-button"
                 aria-label={`Delete saved course ${r.name}`}
                 onClick={() => {
-                  onDelete(recipeKey(r));
+                  void Promise.resolve(onDelete(recipeKey(r))).catch((error) =>
+                    setMessage(
+                      error instanceof Error
+                        ? error.message
+                        : 'Course could not be deleted.',
+                    ),
+                  );
                   if (editingKey === recipeKey(r)) setEditingKey(undefined);
                 }}
               >

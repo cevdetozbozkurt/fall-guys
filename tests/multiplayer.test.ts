@@ -83,13 +83,23 @@ void test('race does not end when only the host finishes; both clients see ident
   s.course = { ...s.course, obstacles: [] };
   s.setHumans([0, 1]);
   s.state = 'racing';
-  s.player.z = s.course.length;
+  const gate = s.course.gates!.at(-1)!;
+  Object.assign(s.player, {
+    x: gate.x,
+    z: gate.z,
+    progress: s.course.length,
+    checkpoint: s.course.checkpoints.at(-1)!,
+  });
   s.move(s.player, EMPTY_INPUT, 1 / 60);
   assert.equal(s.state, 'racing');
   assert.equal(s.player.finished, 1);
   const other = s.racers[1];
-  other.x = 0;
-  other.z = s.course.length;
+  Object.assign(other, {
+    x: gate.x,
+    z: gate.z,
+    progress: s.course.length,
+    checkpoint: s.course.checkpoints.at(-1)!,
+  });
   other.y = 0;
   s.move(other, EMPTY_INPUT, 1 / 60);
   s.step(1 / 60);

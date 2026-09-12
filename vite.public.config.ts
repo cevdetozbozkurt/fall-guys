@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 // Static distribution for GitHub Pages and Vercel. The Sites entry stays intact.
 export default defineConfig({
   root: fileURLToPath(new URL('./web', import.meta.url)),
+  envDir: fileURLToPath(new URL('.', import.meta.url)),
   base: './',
   publicDir: fileURLToPath(new URL('./public', import.meta.url)),
   plugins: [react()],

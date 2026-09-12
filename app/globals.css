@@ -1297,7 +1297,7 @@ kbd {
     height: 95px;
   }
 }
-@media (pointer: coarse) {
+@media (pointer: coarse), (max-width: 860px) {
   .touch-controls {
     display: flex;
     position: absolute;
@@ -2444,6 +2444,37 @@ kbd {
     display: none;
   }
 }
+
+.account-nav {display:flex;align-items:center;gap:7px;max-width:160px;min-height:44px;color:#84f5e7;background:#17253e;border:1px solid #4ce9d54d;border-radius:11px;padding:8px 12px;font-size:14px;font-weight:700;}
+.account-nav span {overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.outfit-link {display:flex!important;align-items:center;gap:7px;border:0!important;width:auto!important;height:auto!important;background:none!important;color:#d2eaf6!important;border-radius:0!important;box-shadow:none!important;font-size:14px!important;font-weight:800;}
+.outfit-preview {height:160px;display:grid;place-items:center;background:radial-gradient(ellipse,#7953c544,transparent 65%);margin-bottom:20px;}
+.outfit-toy {display:block;position:relative;width:74px;height:100px;background:var(--racer-color);border-radius:32px 32px 24px 24px;box-shadow:inset -12px -5px 0 #0002,0 14px 30px #0005;}
+.outfit-toy.body-round {width:90px;height:90px;border-radius:42%;}
+.outfit-toy.body-tall {height:116px;width:64px;}
+.toy-eyes {position:absolute;left:15%;top:26%;width:70%;height:26px;border-radius:10px;background:#10253f;border:3px solid #335377;}
+.toy-eyes:after {content:'';position:absolute;left:10px;top:7px;width:5px;height:9px;background:#77ffed;box-shadow:20px 0 #77ffed;border-radius:3px;}
+.toy-eyes.eyes-glasses {background:#d8ffff;border-color:#182137;}
+.toy-eyes.eyes-glasses:after {background:#16253b;box-shadow:20px 0 #16253b;}
+.toy-eyes.eyes-shades {background:linear-gradient(135deg,#1fd5d3,#123d6a);border-color:#152036;}
+.toy-eyes.eyes-shades:after {display:none;}
+.toy-foot {position:absolute;bottom:-9px;width:25px;height:15px;background:#f3f4e7;border-radius:8px;}
+.toy-foot.left {left:6px;}.toy-foot.right {right:6px;}
+.toy-head {position:absolute;top:-17px;left:8%;width:84%;height:24px;}
+.toy-head.head-cap {background:#246da3;border-radius:50% 50% 0 0;border-bottom:7px solid #45e9cc;}
+.toy-head.head-crown {background:#ffe16b;clip-path:polygon(0 100%,0 5%,25% 45%,50% 0,75% 45%,100% 5%,100% 100%);}
+.toy-head.head-mohawk {width:15px;height:34px;top:-28px;left:calc(50% - 7px);background:#ff55bd;clip-path:polygon(0 100%,0 35%,30% 10%,55% 30%,80% 0,100% 100%);}
+.studio-shortcut {margin:0 0 16px;}
+.community-courses {margin-top:25px;padding-top:20px;border-top:1px solid #56638866;}
+.community-courses h3 {font-size:20px;margin-bottom:12px;}.community-courses>p {color:#b1c2da;font-size:16px;}
+.community-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;}
+.community-grid button {display:grid;gap:8px;text-align:left;padding:14px;border-radius:14px;border:1px solid #5ce4d452;background:#16213b;color:#e9f8ff;}
+.community-grid button svg {height:115px;width:100%;}.community-grid button span {font-size:14px;color:#aec2df;}
+.elevation-preview .course-map {height:180px;max-width:100%;background:#0a142a;border-radius:10px;}
+.install-game {position:absolute;bottom:22px;left:30px;z-index:3;}
+@media(max-width:1450px){.topbar{gap:18px;}.topbar nav{gap:8px;}.header-actions .completion,.header-rule{display:none;}.topbar nav button{font-size:14px;padding-inline:9px;}}
+@media(max-width:1000px){.topbar{flex-wrap:wrap;height:auto;min-height:108px;padding-block:12px;}.topbar nav{order:3;flex-basis:100%;justify-content:center;}.header-actions{margin-left:auto;}.topbar nav button:last-child{display:none;}.brand{margin-right:auto;}.account-nav{max-width:175px;}}
+@media(max-width:760px){.topbar nav{overflow:auto;justify-content:flex-start;flex-wrap:nowrap;gap:4px;}.topbar nav button{white-space:nowrap;font-size:14px;min-height:42px;}.topbar nav .party-nav{display:none!important;}.account-nav{max-width:140px;}.tc-form-grid{grid-template-columns:1fr;}.outfit-link{font-size:14px!important;}.character-picker{flex-wrap:wrap;justify-content:center;}.install-game{bottom:82px;left:18px;}}
 @media (max-width: 1100px) {
   .topbar nav button:last-child {
     display: none;
@@ -2473,5 +2504,9 @@ kbd {
   }
   .party-content [data-slot='input'] {
     font-size: 16px;
+  }
+  .header-actions {
+    display: flex;
+    gap: 6px;
   }
 }

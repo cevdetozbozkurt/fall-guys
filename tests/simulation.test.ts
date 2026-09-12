@@ -1,21 +1,22 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { routeAt, toWorld } from '../lib/routes.ts';
 import { COURSES } from '../lib/courses.ts';
 import { Simulation, EMPTY_INPUT } from '../lib/simulation.ts';
 
-void test('thirty distinct courses have supported start, checkpoints and finish', () => {
-  assert.equal(COURSES.length, 30);
-  assert.equal(new Set(COURSES.map((c) => c.name)).size, 30);
+void test('fifty distinct courses have supported start, checkpoints and finish', () => {
+  assert.equal(COURSES.length, 50);
+  assert.equal(new Set(COURSES.map((c) => c.name)).size, 50);
   for (let i = 0; i < COURSES.length; i++) {
     const s = new Simulation(i);
     for (const z of [1, ...s.course.checkpoints, s.course.length])
       assert.ok(
-        s.support(0, z) >= 0,
+        s.support(routeAt(s.course, z).x, routeAt(s.course, z).z) >= 0,
         `${s.course.name}: unsupported marker at ${z}`,
       );
   }
 });
-void test('all thirty courses can be completed under shared racing physics', () => {
+void test('all fifty courses can be completed under shared racing physics', () => {
   const outcomes = [];
   for (let i = 0; i < COURSES.length; i++) {
     const s = new Simulation(i);
@@ -60,10 +61,12 @@ void test('jump, airborne dive and checkpoint respawn work', () => {
   s.move(s.player, { ...EMPTY_INPUT, z: 1, dive: true }, 1 / 60);
   assert.equal(s.player.dived, true);
   assert.ok(s.player.vz > 4);
-  s.player.checkpoint = 34;
+  s.player.checkpoint = s.course.checkpoints[2];
+  const respawn = routeAt(s.course, s.player.checkpoint);
   s.player.y = -11;
   s.move(s.player, EMPTY_INPUT, 1 / 60);
-  assert.equal(s.player.z, 34);
+  assert.equal(s.player.x, respawn.x);
+  assert.equal(s.player.z, respawn.z);
   assert.equal(s.player.falls, 1);
   assert.ok(s.player.invincible > 0);
 });
@@ -74,13 +77,15 @@ void test('pause freezes race and finish requires a valid landing area', () => {
   s.step(1);
   assert.equal(s.countdown, 3);
   s.paused = false;
-  s.player.x = 20;
-  s.player.z = s.course.length;
+  const gate = s.course.gates!.at(-1)!;
+  Object.assign(s.player, toWorld(gate, 20, 0), {
+    progress: s.course.length,
+    checkpoint: s.course.checkpoints.at(-1)!,
+  });
   s.player.y = -1;
   s.move(s.player, EMPTY_INPUT, 1 / 60);
   assert.equal(s.player.finished, 0);
-  s.player.x = 0;
-  s.player.y = 0;
+  Object.assign(s.player, { x: gate.x, z: gate.z, y: 0 });
   s.move(s.player, EMPTY_INPUT, 1 / 60);
   assert.equal(s.player.finished, 1);
 });

@@ -1,6 +1,10 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  UserRound,
+  Radar,
+  Shirt,
+  ShieldCheck,
   ArrowDown,
   ArrowLeft,
   ArrowRight,
@@ -43,6 +47,26 @@ import {
   type CourseRecipe,
 } from '@/lib/course-builder';
 import CourseEditor from './course-editor';
+import RouteMap from './course-map';
+import { cameraInput } from '@/lib/routes';
+import AccountPanel, { useAccount, OutfitControls } from './account-panel';
+import MatchmakingPanel, { useMatchmaking } from './matchmaking-panel';
+import StaffPanel from './staff-panel';
+import InstallGame from './install-game';
+import {
+  gameBackend,
+  backendMessage,
+  type PublishedLevel,
+  type SavedRecipe,
+  type MatchAssignment,
+} from '@/lib/backend';
+import {
+  DEFAULT_COSMETICS,
+  normalizeCosmetics,
+  type Cosmetics,
+} from '@/lib/cosmetics';
+import type { MatchPeer } from '@/lib/match-peer';
+import type { PublicConnection } from '@/lib/multiplayer';
 import { Simulation, type GameState } from '@/lib/simulation';
 import { Sound } from '@/lib/sound';
 import type { RaceScene } from '@/lib/scene';
@@ -99,63 +123,7 @@ const formatTime = (t: number) =>
     .padStart(2, '0')}:${(t % 60).toFixed(2).padStart(5, '0')}`;
 
 function CourseMap({ index }: { index: number }) {
-  const course = COURSES[index];
-  return (
-    <svg viewBox="0 0 200 100" aria-hidden="true" className="course-map">
-      <rect width="200" height="100" fill={course.sky} />
-      <g
-        transform={`translate(98 70) rotate(-23) skewX(18) scale(1 ${Math.min(0.62, 90 / course.length)})`}
-      >
-        {course.platforms.map((p, i) => (
-          <rect
-            key={i}
-            x={p.x * 4 - p.w * 2}
-            y={48 - p.z * 0.77 - p.d * 0.385}
-            width={p.w * 4}
-            height={p.d * 0.77}
-            rx="2"
-            fill={p.kind === 'crumble' ? course.accent : course.color}
-            stroke="#ffffff"
-            strokeWidth=".7"
-          />
-        ))}
-        {course.obstacles.map((o, i) => (
-          <g key={i} transform={`translate(${o.x * 4},${48 - o.z * 0.77})`}>
-            {o.type === 'bar' ? (
-              <>
-                <rect
-                  x="-23"
-                  y="-2.5"
-                  width="46"
-                  height="5"
-                  rx="2"
-                  fill={course.accent}
-                  transform={`rotate(${i * 32 + 25})`}
-                />
-                <circle r="4" fill="#fff0bb" />
-              </>
-            ) : (
-              <rect
-                x={o.type === 'hurdle' ? -22 : -5}
-                y="-4"
-                width={o.type === 'hurdle' ? 44 : 10}
-                height="8"
-                rx="4"
-                fill={course.accent}
-                stroke="#fff0cc"
-                strokeWidth="2"
-              />
-            )}
-          </g>
-        ))}
-        <path
-          d={`M -30 ${48 - course.length * 0.77} h 60`}
-          stroke="#ffe8a5"
-          strokeWidth="7"
-        />
-      </g>
-    </svg>
-  );
+  return <RouteMap course={COURSES[index]} />;
 }
 
 export default function Game() {
@@ -183,7 +151,16 @@ export default function Game() {
     [muted, setMuted] = useState(false);
   const [snap, setSnap] = useState(initial),
     [modal, setModal] = useState<
-      'courses' | 'help' | 'pause' | 'party' | 'builder' | null
+      | 'courses'
+      | 'help'
+      | 'pause'
+      | 'party'
+      | 'builder'
+      | 'account'
+      | 'matchmaking'
+      | 'staff'
+      | 'outfit'
+      | null
     >(null),
     [records, setRecords] = useState<Record<string, RecordEntry>>({}),
     [notice, setNotice] = useState(''),
@@ -195,6 +172,146 @@ export default function Game() {
     [joinCode, setJoinCode] = useState(''),
     [partyCourse, setPartyCourse] = useState(1),
     [copyState, setCopyState] = useState('');
+  const accountController = useAccount();
+  const [cosmetics, setCosmetics] = useState<Cosmetics>({
+    ...DEFAULT_COSMETICS,
+  });
+  const cosmeticsRef = useRef(cosmetics);
+  const [published, setPublished] = useState<PublishedLevel[]>([]);
+  const [catalogError, setCatalogError] = useState('');
+  const [cloudSaved, setCloudSaved] = useState<SavedRecipe[]>([]);
+  const [editingPublished, setEditingPublished] =
+    useState<PublishedLevel | null>(null);
+  const publicPeer = useRef<MatchPeer | null>(null);
+  const publicOpening = useRef<Promise<MatchPeer> | null>(null);
+  const setupParty = useRef<
+    (host: boolean, online?: PublicConnection) => Promise<void>
+  >(async () => {});
+  const changeCosmetics = useCallback((value: Cosmetics) => {
+    const outfit = normalizeCosmetics(value);
+    cosmeticsRef.current = outfit;
+    setCosmetics(outfit);
+    setColor(COLORS.indexOf(outfit.color));
+    engine.current?.setCosmetics(outfit);
+    try {
+      localStorage.setItem('tumble-club-outfit-v1', JSON.stringify(outfit));
+    } catch {
+      /* Device preferences are optional. */
+    }
+  }, []);
+  const refreshCatalog = useCallback(async () => {
+    try {
+      setPublished(await gameBackend.publishedLevels());
+      setCatalogError('');
+    } catch (error) {
+      setCatalogError(backendMessage(error));
+    }
+  }, []);
+  const getPeerId = useCallback(async () => {
+    if (publicPeer.current && !publicPeer.current.peer.destroyed)
+      return publicPeer.current.peer.id;
+    if (!publicOpening.current)
+      publicOpening.current = import('@/lib/match-peer').then(
+        ({ createMatchPeer }) => createMatchPeer(),
+      );
+    try {
+      publicPeer.current = await publicOpening.current;
+      return publicPeer.current.peer.id;
+    } finally {
+      publicOpening.current = null;
+    }
+  }, []);
+  const closePublic = useCallback((matchId?: string) => {
+    if (!party.current?.online) return;
+    if (matchId && party.current.online.assignment.matchId !== matchId) return;
+    const simulation = sim.current;
+    party.current.close(false, true);
+    party.current = null;
+    setPartyView({ ...emptyParty });
+    if (simulation) {
+      simulation.reset(simulation.course);
+      engine.current?.setMembers([]);
+      engine.current?.build();
+      setSnap(initial);
+    }
+  }, []);
+  const onMatch = useCallback(async (assignment: MatchAssignment) => {
+    const lease = publicPeer.current;
+    if (!lease || lease.peer.destroyed)
+      throw new Error('The game network disconnected. Search again.');
+    await setupParty.current(assignment.userId === assignment.hostUserId, {
+      lease,
+      assignment,
+      validate: (userId, ticket, peerId) =>
+        gameBackend.validateJoin(assignment.matchId, userId, ticket, peerId),
+      start: () => gameBackend.startMatch(assignment.matchId),
+    });
+  }, []);
+  const matchmaking = useMatchmaking({
+    account: accountController.account,
+    getPeerId,
+    onMatch,
+    onAssignment: (assignment) => party.current?.updateAssignment(assignment),
+    onClosed: closePublic,
+  });
+  const cancelPublic = async () => {
+    if (matchmaking.status.state !== 'idle' || matchmaking.busy)
+      await matchmaking.cancel();
+    publicPeer.current?.destroy();
+    publicPeer.current = null;
+  };
+  useEffect(() => {
+    try {
+      const outfit = localStorage.getItem('tumble-club-outfit-v1');
+      // oxlint-disable-next-line react/react-compiler -- Synchronize the external device preference with the 3D scene after mount.
+      if (outfit) changeCosmetics(normalizeCosmetics(JSON.parse(outfit)));
+    } catch {
+      /* Ignore invalid device preferences. */
+    }
+    return () => {
+      publicPeer.current?.destroy();
+    };
+  }, [changeCosmetics]);
+  useEffect(() => {
+    // oxlint-disable-next-line react/react-compiler -- Initial asynchronous catalog fetch subscribes this view to the backend.
+    void refreshCatalog();
+    const refresh = () => {
+      if (document.visibilityState === 'visible') void refreshCatalog();
+    };
+    document.addEventListener('visibilitychange', refresh);
+    return () => document.removeEventListener('visibilitychange', refresh);
+  }, [refreshCatalog]);
+  useEffect(() => {
+    // oxlint-disable-next-line react/react-compiler -- Opening the catalog refreshes external published data.
+    if (modal === 'courses') void refreshCatalog();
+  }, [modal, refreshCatalog]);
+  useEffect(() => {
+    const profile = accountController.account?.profile;
+    if (!profile) {
+      // oxlint-disable-next-line react/react-compiler -- Clear private account data immediately when the external auth session changes.
+      setCloudSaved([]);
+      return;
+    }
+    // oxlint-disable-next-line react/react-compiler -- Hydrate the imperative 3D scene from the authenticated profile.
+    changeCosmetics(profile.cosmetics);
+    setPlayerName(profile.username);
+    let current = true;
+    void gameBackend
+      .savedRecipes()
+      .then((rows) => {
+        if (current) setCloudSaved(rows);
+      })
+      .catch((error) => {
+        if (current) setNotice(backendMessage(error));
+      });
+    return () => {
+      current = false;
+    };
+  }, [accountController.account?.profile, changeCosmetics]);
+  useEffect(() => {
+    // oxlint-disable-next-line react/react-compiler -- The external PASSWORD_RECOVERY event opens the password form.
+    if (accountController.recovery) setModal('account');
+  }, [accountController.recovery]);
   const inParty = ['waiting', 'racing', 'finished'].includes(partyView.status);
   const course = activeCourse,
     racing = snap.state !== 'lobby',
@@ -225,6 +342,7 @@ export default function Game() {
       last = 0,
       accumulator = 0,
       uiElapsed = 0,
+      renderElapsed = 0,
       noticeTimer = 0;
     const invite = new URL(window.location.href).searchParams.get('room');
     if (invite)
@@ -284,6 +402,7 @@ export default function Game() {
         if (destroyed || !container.current) return;
         const view = new Scene(container.current, simulation, 0);
         engine.current = view;
+        view.setCosmetics(cosmeticsRef.current);
         setReady(true);
         const loop = (now: number) => {
           if (destroyed) return;
@@ -308,6 +427,14 @@ export default function Game() {
                   ? 1
                   : 0) +
                 touch.current.z;
+              Object.assign(
+                simulation.input,
+                cameraInput(
+                  simulation.input.x,
+                  simulation.input.z,
+                  view.cameraYaw,
+                ),
+              );
             }
             if (party.current && !party.current.closed)
               party.current.tick(1 / 60);
@@ -356,7 +483,7 @@ export default function Game() {
             }
           }
           uiElapsed += dt;
-          if (uiElapsed > 0.08) {
+          if (uiElapsed > 0.08 && simulation.state !== 'lobby') {
             uiElapsed = 0;
             setSnap({
               place: simulation.player.finished,
@@ -367,7 +494,7 @@ export default function Game() {
                 0,
                 Math.min(
                   100,
-                  (simulation.player.z / simulation.course.length) * 100,
+                  (simulation.player.progress / simulation.course.length) * 100,
                 ),
               ),
               countdown: Math.ceil(simulation.countdown),
@@ -381,7 +508,11 @@ export default function Game() {
               })),
             });
           }
-          view.render(dt);
+          renderElapsed += dt;
+          if (simulation.state !== 'lobby' || renderElapsed >= 1 / 30) {
+            view.render(renderElapsed);
+            renderElapsed = 0;
+          }
           frame = requestAnimationFrame(loop);
         };
         frame = requestAnimationFrame(loop);
@@ -533,7 +664,8 @@ export default function Game() {
     if (series) setSeriesPoints((p) => p + Math.max(1, 13 - snap.rank));
     load(selected + 1, true);
   };
-  const connectParty = async (host: boolean) => {
+  const connectParty = async (host: boolean, online?: PublicConnection) => {
+    if (!online) await cancelPublic();
     if (!sim.current || !engine.current) return;
     party.current?.close(false);
     setPartyView({ ...emptyParty, status: 'connecting' });
@@ -552,7 +684,7 @@ export default function Game() {
             sound.current?.unlock();
           }
           if (view.status === 'waiting' && previousStatus !== 'waiting')
-            setModal('party');
+            setModal(online ? 'matchmaking' : 'party');
           previousStatus = view.status;
         },
         prepare: (nextCourse) => {
@@ -568,17 +700,37 @@ export default function Game() {
         },
         roster: (members) => engine.current?.setMembers(members),
         ended: (reason) => {
+          if (online)
+            void matchmaking.transportFailed(online.assignment.matchId, reason);
           simulation.reset(simulation.course);
           engine.current?.setMembers([]);
           engine.current?.build();
           setSnap(initial);
           setNotice(reason);
-          setModal('party');
+          setModal(online ? 'matchmaking' : 'party');
         },
       });
       party.current = room;
-      room.connect(host, playerName.trim() || 'Tumbler', color, joinCode);
-    } catch {
+      const profile = online?.assignment.members.find(
+        (m) => m.userId === online.assignment.userId,
+      );
+      const outfit = profile?.cosmetics ?? cosmeticsRef.current;
+      room.connect(
+        host,
+        profile?.username ??
+          (accountController.account?.profile?.username ||
+            playerName.trim() ||
+            'Tumbler'),
+        COLORS.indexOf(outfit.color),
+        joinCode,
+        outfit,
+        online,
+      );
+      if (host)
+        for (const level of published.slice(0, 16))
+          room.addCourse(level.recipe);
+    } catch (cause) {
+      if (online) throw cause;
       setPartyView({
         ...emptyParty,
         status: 'error',
@@ -586,11 +738,19 @@ export default function Game() {
       });
     }
   };
+  useEffect(() => {
+    setupParty.current = connectParty;
+  });
   const leaveParty = () => {
+    if (party.current?.online) {
+      void cancelPublic();
+      return;
+    }
     party.current?.close();
     party.current = null;
     setPartyView(emptyParty);
     engine.current?.memberColors.clear();
+    engine.current?.memberCosmetics.clear();
     setSeries(false);
     load(course);
   };
@@ -613,7 +773,24 @@ export default function Game() {
       return false;
     }
   };
-  const saveCourse = (recipe: CourseRecipe, replaces?: number) => {
+  const saveCourse = async (recipe: CourseRecipe, replaces?: number) => {
+    if (accountController.account?.profile) {
+      try {
+        const existing = cloudSaved.find(
+          (r) =>
+            recipeKey(r.recipe) === replaces ||
+            recipeKey(r.recipe) === recipeKey(recipe),
+        );
+        const saved = await gameBackend.saveRecipe(recipe, existing?.id);
+        setCloudSaved((current) => [
+          saved,
+          ...current.filter((r) => r.id !== saved.id),
+        ]);
+        return 'Saved to your account.';
+      } catch (error) {
+        return backendMessage(error);
+      }
+    }
     const next = savedCourses.filter(
       (r) => recipeKey(r) !== replaces && recipeKey(r) !== recipeKey(recipe),
     );
@@ -622,6 +799,18 @@ export default function Game() {
     return persistCourses([...next, recipe])
       ? 'Saved on this device.'
       : 'Saving is unavailable. Allow browser storage, or test this course without saving.';
+  };
+  const deleteCourse = async (key: number) => {
+    if (accountController.account?.profile) {
+      const found = cloudSaved.find((r) => recipeKey(r.recipe) === key);
+      if (found) {
+        await gameBackend.deleteRecipe(found.id);
+        setCloudSaved((current) => current.filter((r) => r.id !== found.id));
+      }
+    } else if (
+      !persistCourses(savedCourses.filter((r) => recipeKey(r) !== key))
+    )
+      throw new Error('Browser storage is unavailable.');
   };
   const toggleSound = () => {
     const next = !muted;
@@ -682,6 +871,10 @@ export default function Game() {
               <Users size={17} />
               {inParty ? `Room ${partyView.code}` : 'Play with friends'}
             </button>
+            <button onClick={() => setModal('matchmaking')}>
+              <Radar size={17} />
+              Find a game
+            </button>
             <button onClick={() => setModal('builder')}>
               <Hammer size={17} /> Course builder
             </button>
@@ -690,6 +883,13 @@ export default function Game() {
             </button>
           </nav>
           <div className="header-actions">
+            <button className="account-nav" onClick={() => setModal('account')}>
+              <UserRound size={18} />
+              <span>
+                {accountController.account?.profile?.username ??
+                  (accountController.session ? 'Your account' : 'Sign in')}
+              </span>
+            </button>
             <span className="completion">
               <Trophy size={19} />
               <b>{completed}</b>
@@ -714,7 +914,7 @@ export default function Game() {
             <div className="lobby-shade" />
             <div className="lobby-copy">
               <div className="eyebrow">
-                <Sparkles size={15} /> COSMIC ARCADE · 30 COURSES
+                <Sparkles size={15} /> COSMIC ARCADE · 50 COURSES
               </div>
               <h1>
                 RACE THE
@@ -774,7 +974,7 @@ export default function Game() {
               <div className="under-play">
                 <Users size={15} />
                 {mode === 'championship'
-                  ? '30 rounds · Finish in the top 8 to advance'
+                  ? '50 rounds · Finish in the top 8 to advance'
                   : 'You + 11 bots · One delightfully chaotic race'}
               </div>
               <button
@@ -807,7 +1007,14 @@ export default function Game() {
               </div>
             </div>
             <div className="character-picker">
-              <span>YOUR COLOR</span>
+              <button
+                className="outfit-link"
+                onClick={() => setModal('outfit')}
+                disabled={inParty}
+              >
+                <Shirt size={16} />
+                YOUR LOOK
+              </button>
               <div>
                 {COLORS.map((c, i) => (
                   <button
@@ -818,8 +1025,10 @@ export default function Game() {
                     style={{ background: c }}
                     className={color === i ? 'selected' : ''}
                     onClick={() => {
-                      setColor(i);
-                      engine.current?.setColor(i);
+                      changeCosmetics({
+                        ...cosmetics,
+                        color: COLORS[i] as Cosmetics['color'],
+                      });
                     }}
                   >
                     {color === i && <Check size={16} strokeWidth={3} />}
@@ -827,6 +1036,7 @@ export default function Game() {
                 ))}
               </div>
             </div>
+            <InstallGame />
             <div className="scene-note">
               <span className="note-line" />A little wobble is part of the plan.
             </div>
@@ -989,7 +1199,7 @@ export default function Game() {
           <div className="shelf-heading">
             <div>
               <span className="section-kicker">PICK YOUR PLAYGROUND</span>
-              <h2>30 worlds. Endless routes.</h2>
+              <h2>50 worlds. Endless routes.</h2>
             </div>
             <button className="text-button" onClick={() => setModal('courses')}>
               Explore all courses <ArrowRight size={17} />
@@ -1049,60 +1259,145 @@ export default function Game() {
               ? 'game-dialog builder-dialog'
               : modal === 'courses'
                 ? 'game-dialog courses-dialog'
-                : 'game-dialog'
+                : modal === 'staff'
+                  ? 'game-dialog builder-dialog'
+                  : 'game-dialog'
           }
         >
           <DialogTitle>
-            {modal === 'builder'
-              ? 'Build your next challenge.'
-              : modal === 'party'
-                ? 'Better with friends.'
-                : modal === 'courses'
-                  ? 'Pick your playground.'
-                  : modal === 'help'
-                    ? 'A crash course in tumbling.'
-                    : 'Taking a breather?'}
+            {modal === 'account'
+              ? 'Your player account.'
+              : modal === 'matchmaking'
+                ? 'Race with the world.'
+                : modal === 'staff'
+                  ? 'Your design studio.'
+                  : modal === 'outfit'
+                    ? 'Make your racer yours.'
+                    : modal === 'builder'
+                      ? 'Build your next challenge.'
+                      : modal === 'party'
+                        ? 'Better with friends.'
+                        : modal === 'courses'
+                          ? 'Pick your playground.'
+                          : modal === 'help'
+                            ? 'A crash course in tumbling.'
+                            : 'Taking a breather?'}
           </DialogTitle>
           <DialogDescription>
-            {modal === 'builder'
-              ? 'Arrange sections, test your route, and add it to your friend room.'
-              : modal === 'party'
-                ? 'Create a room, share the code, and race together. Up to 8 friends.'
-                : modal === 'courses'
-                  ? 'Thirty original courses. Pick any one and make it to the finish.'
-                  : modal === 'help'
-                    ? 'A little timing goes a long way. Here’s everything you need.'
-                    : inParty
-                      ? 'Online races keep running while this menu is open.'
-                      : 'Your race is paused. Your rivals can wait.'}
+            {modal === 'account'
+              ? 'Save your look and courses across devices.'
+              : modal === 'matchmaking'
+                ? 'Search for five real players and stay together between rounds.'
+                : modal === 'staff'
+                  ? 'Create courses for the whole club.'
+                  : modal === 'outfit'
+                    ? 'Choose a shape, headwear and glasses.'
+                    : modal === 'builder'
+                      ? 'Arrange sections, test your route, and add it to your friend room.'
+                      : modal === 'party'
+                        ? 'Create a room, share the code, and race together. Up to 8 friends.'
+                        : modal === 'courses'
+                          ? 'Fifty original courses, plus new creations from our designers.'
+                          : modal === 'help'
+                            ? 'A little timing goes a long way. Here’s everything you need.'
+                            : inParty
+                              ? 'Online races keep running while this menu is open.'
+                              : 'Your race is paused. Your rivals can wait.'}
           </DialogDescription>
-          {modal === 'builder' && (
-            <CourseEditor
-              saved={savedCourses}
-              inParty={inParty}
-              roomCourses={partyView.customCourses}
-              draft={editorDraft}
-              setDraft={setEditorDraft}
-              editingKey={editingKey}
-              setEditingKey={setEditingKey}
-              courseMessage={partyView.courseMessage}
-              onSave={saveCourse}
-              onDelete={(key) => {
-                if (
-                  !persistCourses(
-                    savedCourses.filter((r) => recipeKey(r) !== key),
-                  )
-                )
-                  setNotice('Browser storage is unavailable.');
+          {modal === 'account' && (
+            <AccountPanel
+              key={`${accountController.session?.user.id ?? 'guest'}:${accountController.account?.profile?.username ?? ''}`}
+              controller={accountController}
+              cosmetics={cosmetics}
+              onCosmeticsChange={changeCosmetics}
+              onBeforeSignOut={async () => {
+                await cancelPublic();
+                if (party.current) leaveParty();
               }}
-              onTest={(recipe) => {
-                setSeries(false);
-                load(buildCourse(recipe), true);
-              }}
-              onAddToRoom={(recipe) =>
-                party.current?.addCourse(recipe) ?? false
-              }
+              onStaff={() => setModal('staff')}
             />
+          )}
+          {modal === 'outfit' && (
+            <div className="tc-online-panel">
+              <div
+                className="outfit-preview"
+                style={
+                  { '--racer-color': cosmetics.color } as React.CSSProperties
+                }
+              >
+                <span className={'outfit-toy body-' + cosmetics.body}>
+                  <i className={'toy-head head-' + cosmetics.head} />
+                  <i className={'toy-eyes eyes-' + cosmetics.eyes} />
+                  <i className="toy-foot left" />
+                  <i className="toy-foot right" />
+                </span>
+              </div>
+              <OutfitControls value={cosmetics} onChange={changeCosmetics} />
+              <p className="tc-muted">
+                Your look is saved on this device. Save your player profile to
+                use it across devices.
+              </p>
+            </div>
+          )}
+          {modal === 'matchmaking' && (
+            <MatchmakingPanel
+              controller={matchmaking}
+              account={accountController.account}
+              onAccount={() => setModal('account')}
+              inPrivateRoom={inParty && !partyView.publicMatch}
+            />
+          )}
+          {modal === 'staff' && (
+            <StaffPanel
+              account={accountController.account}
+              draft={editorDraft}
+              editing={editingPublished}
+              setEditing={setEditingPublished}
+              onEdit={(recipe) => {
+                setEditorDraft(structuredClone(recipe));
+                setEditingKey(undefined);
+                setModal('builder');
+              }}
+              onPublished={refreshCatalog}
+            />
+          )}
+          {modal === 'builder' && (
+            <>
+              {accountController.account &&
+                accountController.account.role !== 'player' && (
+                  <button
+                    className="tc-secondary studio-shortcut"
+                    onClick={() => setModal('staff')}
+                  >
+                    <ShieldCheck size={17} />
+                    Publish &amp; manage courses
+                  </button>
+                )}
+              <CourseEditor
+                saved={
+                  accountController.account?.profile
+                    ? cloudSaved.map((r) => r.recipe)
+                    : savedCourses
+                }
+                cloud={!!accountController.account?.profile}
+                inParty={inParty}
+                roomCourses={partyView.customCourses}
+                draft={editorDraft}
+                setDraft={setEditorDraft}
+                editingKey={editingKey}
+                setEditingKey={setEditingKey}
+                courseMessage={partyView.courseMessage}
+                onSave={saveCourse}
+                onDelete={deleteCourse}
+                onTest={(recipe) => {
+                  setSeries(false);
+                  load(buildCourse(recipe), true);
+                }}
+                onAddToRoom={(recipe) =>
+                  party.current?.addCourse(recipe) ?? false
+                }
+              />
+            </>
           )}
           {modal === 'party' && (
             <div className="party-content">
@@ -1116,7 +1411,7 @@ export default function Game() {
                   <label htmlFor="player-name">Your racer name</label>
                   <Input
                     id="player-name"
-                    maxLength={20}
+                    maxLength={24}
                     value={playerName}
                     onChange={(e) => setPlayerName(e.target.value)}
                     placeholder="Tumbler"
@@ -1274,7 +1569,7 @@ export default function Game() {
                         }
                       >
                         <NativeSelectOption value="all">
-                          All 30 courses + room creations
+                          All 50 courses + room creations
                         </NativeSelectOption>
                         <NativeSelectOption
                           value="custom"
@@ -1361,6 +1656,46 @@ export default function Game() {
               })}
             </div>
           )}
+          {modal === 'courses' && (
+            <section className="community-courses">
+              <h3>
+                Designer courses <span>{published.length}</span>
+              </h3>
+              {catalogError ? (
+                <p role="alert">{catalogError}</p>
+              ) : published.length === 0 ? (
+                <p>
+                  New courses from the club&apos;s designers will appear here.
+                </p>
+              ) : (
+                <div className="community-grid">
+                  {published.map((level) => {
+                    const c = buildCourse(level.recipe);
+                    return (
+                      <button
+                        key={level.id}
+                        onClick={() => {
+                          if (inParty) {
+                            party.current?.addCourse(level.recipe);
+                            setModal('party');
+                          } else {
+                            setSeries(false);
+                            load(c);
+                          }
+                        }}
+                      >
+                        <RouteMap course={c} />
+                        <strong>{c.name}</strong>
+                        <span>
+                          {c.difficulty} · {c.recipe?.segments.length} sections
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          )}
           {modal === 'help' && (
             <div className="help-content">
               <div className="help-row">
@@ -1420,8 +1755,14 @@ export default function Game() {
                 </p>
               </div>
               <p className="help-fine">
+                Install from your browser&apos;s app menu. On iPhone or iPad,
+                open in Safari, tap Share, then Add to Home Screen. Solo play
+                works offline after the game has downloaded; online rooms and
+                accounts need a connection.
+              </p>
+              <p className="help-fine">
                 Quick race: finish any course within 150 seconds. Championship:
-                place in the top 8 in all 30 rounds. Your course records are
+                place in the top 8 in all 50 rounds. Your course records are
                 saved on this device.
               </p>
             </div>
