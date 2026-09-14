@@ -1,4 +1,6 @@
 'use client';
+import { t } from '@/lib/i18n';
+
 /* oxlint-disable nextjs/no-img-element -- Images are locally rendered data URLs; no image server or network transfer. */
 import { useEffect, useState } from 'react';
 import {
@@ -64,12 +66,12 @@ export default function StarShop({
         <AvatarPreview outfit={draft} />
         <div className="shop-balance">
           <strong>★ {starBalance(progress)}</strong>
-          <span>stars to spend</span>
+          <span>{t('stars to spend')}</span>
         </div>
         <div className="shop-selection">
-          <strong>{item.name}</strong>
+          <strong>{t(item.name)}</strong>
           <span>
-            {owned ? 'Owned · equipped' : `Try it on · ${item.price} stars`}
+            {t(owned ? 'Owned · equipped' : `Try it on · ${item.price} stars`)}
           </span>
           {!owned && (
             <button
@@ -84,16 +86,19 @@ export default function StarShop({
                 })
               }
             >
-              Unlock for ★ {item.price}
+              {t('Unlock for ★ ')}
+              {item.price}
             </button>
           )}
         </div>
         <fieldset className="shop-swatches">
-          <legend>Body color</legend>
+          <legend>{t('Body color')}</legend>
           {OUTFIT_COLORS.map((color, index) => (
             <button
               key={color}
-              aria-label={`Use ${['peach', 'purple', 'mint', 'yellow', 'pink', 'blue'][index]} body color`}
+              aria-label={t(
+                `Use ${['peach', 'purple', 'mint', 'yellow', 'pink', 'blue'][index]} body color`,
+              )}
               disabled={busy}
               aria-pressed={draft.color === color}
               style={{ background: color }}
@@ -115,28 +120,28 @@ export default function StarShop({
                 .catch((e) => setMessage(e.message))
             }
           >
-            Save outfit to account
+            {t('Save outfit to account')}
           </button>
         )}
-        <output className="shop-message">{message}</output>
-        <small>Same speed and hitbox for every outfit.</small>
+        <output className="shop-message">{t(message)}</output>
+        <small>{t('Same speed and hitbox for every outfit.')}</small>
       </div>
       <div className="shop-catalog">
-        <fieldset className="shop-tabs" aria-label="Accessory category">
+        <fieldset className="shop-tabs" aria-label={t('Accessory category')}>
           {(['body', 'head', 'eyes', 'back'] as const).map((category) => (
             <button
               key={category}
               aria-pressed={slot === category}
               onClick={() => setSlot(category)}
             >
-              {
+              {t(
                 {
                   body: 'Bodies',
                   head: 'Headwear',
                   eyes: 'Eyewear',
                   back: 'Back gear',
-                }[category]
-              }
+                }[category],
+              )}
             </button>
           ))}
         </fieldset>
@@ -148,7 +153,9 @@ export default function StarShop({
               }
               key={item.id}
               disabled={busy}
-              aria-label={`${item.name}, ${progress.owned.includes(item.id) ? 'owned' : item.price + ' stars'}`}
+              aria-label={t(
+                `${item.name}, ${progress.owned.includes(item.id) ? 'owned' : item.price + ' stars'}`,
+              )}
               aria-pressed={selected === item.id}
               onClick={() => {
                 const next = equipItem(value, item);
@@ -158,21 +165,23 @@ export default function StarShop({
               }}
             >
               {images[item.id] ? (
-                <img src={images[item.id]} alt="" />
+                <img src={images[item.id]} alt={t('')} />
               ) : (
                 <span className="shop-picture-loading">✦</span>
               )}
-              <strong>{item.name}</strong>
+              <strong>{t(item.name)}</strong>
               <span>
-                {progress.owned.includes(item.id)
-                  ? '✓ Owned'
-                  : `★ ${item.price}`}
+                {t(
+                  progress.owned.includes(item.id)
+                    ? '✓ Owned'
+                    : `★ ${item.price}`,
+                )}
               </span>
             </button>
           ))}
         </div>
         <details className="shop-bundles">
-          <summary>Complete outfits</summary>
+          <summary>{t('Complete outfits')}</summary>
           {OUTFIT_BUNDLES.map((bundle) => {
             const price = SHOP_ITEMS.filter(
               (item) =>
@@ -181,8 +190,11 @@ export default function StarShop({
             ).reduce((sum, item) => sum + item.price, 0);
             return (
               <div key={bundle.id}>
-                <strong>{bundle.name}</strong>
-                <span>{bundle.items.length} matching items</span>
+                <strong>{t(bundle.name)}</strong>
+                <span>
+                  {bundle.items.length}
+                  {t(' matching items')}
+                </span>
                 <button
                   disabled={busy || price > starBalance(progress)}
                   onClick={() =>
@@ -201,15 +213,16 @@ export default function StarShop({
                     })
                   }
                 >
-                  {price ? `Unlock ★ ${price}` : 'Equip outfit'}
+                  {t(price ? `Unlock ★ ${price}` : 'Equip outfit')}
                 </button>
               </div>
             );
           })}
         </details>
         <p className="tc-muted">
-          Earn up to three stars on each solo course. Improving a best time
-          earns the difference; purchases never remove your earned course stars.
+          {t(
+            'Earn up to three stars on each solo course. Improving a best time earns the difference; purchases never remove your earned course stars.',
+          )}
         </p>
       </div>
     </div>

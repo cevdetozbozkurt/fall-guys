@@ -1,4 +1,5 @@
 import type { Course } from '@/lib/courses';
+import { t } from '@/lib/i18n';
 import { toWorld, routeAt } from '@/lib/routes';
 import { ribbonFootprint } from '@/lib/ribbon';
 
@@ -21,9 +22,9 @@ export default function RouteMap({ course }: { course: Course }) {
     <svg
       className="course-map"
       viewBox={`${minX} ${-maxZ} ${maxX - minX} ${maxZ - minZ}`}
-      aria-label={`Overhead route map of ${course.name}`}
+      aria-label={t(`Overhead route map of ${course.name}`)}
     >
-      <title>{course.name}: turns, forks, platforms and hazards</title>
+      <title>{course.name}: {t('turns, forks, platforms and hazards')}</title>
       {corners.map((ps, i) =>
         course.platforms[i].ribbon !== undefined ? null : (
           <polygon

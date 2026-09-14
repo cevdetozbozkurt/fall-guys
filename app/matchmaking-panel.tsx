@@ -1,4 +1,6 @@
 'use client';
+import { t } from '@/lib/i18n';
+
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, Radar, UserRound, Users } from 'lucide-react';
 import {
@@ -259,37 +261,42 @@ export default function MatchmakingPanel({
   const active = status.state !== 'idle';
   return (
     <section className="tc-online-panel tc-match-panel">
-      <span className="tc-eyebrow">Public online game</span>
+      <span className="tc-eyebrow">{t('Public online game')}</span>
       <h2>
-        {status.state === 'matched'
-          ? status.phase === 'playing'
-            ? 'Your crew is racing'
-            : 'Meet your crew'
-          : active
-            ? 'Searching for players…'
-            : 'Find your next crew'}
+        {t(
+          status.state === 'matched'
+            ? status.phase === 'playing'
+              ? 'Your crew is racing'
+              : 'Meet your crew'
+            : active
+              ? 'Searching for players…'
+              : 'Find your next crew',
+        )}
       </h2>
       <div className="tc-match-orbit" data-searching={active || busy}>
         <Radar size={38} />
       </div>
       {!backend.configured ? (
         <p>
-          Public matchmaking is not available yet. You can still race with
-          friends using a private room code.
+          {t(
+            'Public matchmaking is not available yet. You can still race with friends using a private room code.',
+          )}
         </p>
       ) : !account?.profile ? (
         <>
-          <p>Sign in and choose a player name to meet other racers.</p>
+          <p>{t('Sign in and choose a player name to meet other racers.')}</p>
           <button className="tc-primary" type="button" onClick={onAccount}>
             <UserRound size={17} />
-            {account ? 'Choose player name' : 'Sign in to play'}
+            {t(account ? 'Choose player name' : 'Sign in to play')}
           </button>
         </>
       ) : (
         <>
           <div
             className="tc-match-players"
-            aria-label={`${count} of 5 players ${status.state === 'matched' ? 'connected' : 'found'}`}
+            aria-label={t(
+              `${count} of 5 players ${status.state === 'matched' ? 'connected' : 'found'}`,
+            )}
           >
             {Array.from({ length: 5 }, (_, i) => (
               <span key={i} className="tc-match-slot" data-ready={i < count}>
@@ -298,20 +305,22 @@ export default function MatchmakingPanel({
             ))}
           </div>
           <output>
-            {status.state === 'matched'
-              ? status.phase === 'playing'
-                ? 'The lobby stays together for the next course.'
-                : `${count}/5 connected. Joining the same lobby…`
-              : status.state === 'searching'
-                ? `${count}/5 players found. The game starts when five real players are ready.`
-                : 'Five players. Fifty courses. A new challenge every round.'}
+            {t(
+              status.state === 'matched'
+                ? status.phase === 'playing'
+                  ? 'The lobby stays together for the next course.'
+                  : `${count}/5 connected. Joining the same lobby…`
+                : status.state === 'searching'
+                  ? `${count}/5 players found. The game starts when five real players are ready.`
+                  : 'Five players. Fifty courses. A new challenge every round.',
+            )}
           </output>
           {status.state === 'matched' && (
             <ul className="tc-match-members">
               {status.members.map((m) => (
                 <li key={m.userId}>
-                  {m.username}
-                  {m.userId === status.hostUserId ? ' · host' : ''}
+                  {t(m.username)}
+                  {t(m.userId === status.hostUserId ? ' · host' : '')}
                 </li>
               ))}
             </ul>
@@ -323,11 +332,13 @@ export default function MatchmakingPanel({
               disabled={busy}
               onClick={() => void cancel()}
             >
-              {busy
-                ? 'Leaving…'
-                : status.state === 'matched'
-                  ? 'Leave this game'
-                  : 'Cancel search'}
+              {t(
+                busy
+                  ? 'Leaving…'
+                  : status.state === 'matched'
+                    ? 'Leave this game'
+                    : 'Cancel search',
+              )}
             </button>
           ) : (
             <button
@@ -337,24 +348,24 @@ export default function MatchmakingPanel({
               onClick={() => void start()}
             >
               <Users size={17} />
-              {busy ? 'Connecting…' : 'Search for a game'}
+              {t(busy ? 'Connecting…' : 'Search for a game')}
             </button>
           )}
           {inPrivateRoom && !active && (
             <p className="tc-muted">
-              Leave your private room before starting a public search.
+              {t('Leave your private room before starting a public search.')}
             </p>
           )}
           {!active && (
             <p className="tc-muted">
-              You can cancel at any time while waiting for a group.
+              {t('You can cancel at any time while waiting for a group.')}
             </p>
           )}
         </>
       )}
       {error && (
         <p className="tc-notice tc-error" role="alert">
-          {error}
+          {t(error)}
         </p>
       )}
     </section>

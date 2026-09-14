@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { COURSES } from '@/lib/courses';
 import { gameBackend, backendMessage } from '@/lib/backend';
 import {
   newProgression,
@@ -11,11 +12,11 @@ import {
 const key = (id?: string) => 'tumble-progression-v2:' + (id ?? 'guest');
 function withLocalBest(remote: Progression, local: Progression) {
   let merged = remote;
-  for (let id = 1; id <= 50; id++)
+  for (const { id } of COURSES)
     if (local.best[id]) merged = recordFinish(merged, id, local.best[id]);
   return merged;
 }
-export function useProgression(userId?: string) {
+export function useProgression(userId?: string, catalogRevision = 0) {
   const [progress, setProgress] = useState(newProgression),
     [busy, setBusy] = useState(false),
     [message, setMessage] = useState('');
@@ -37,7 +38,7 @@ export function useProgression(userId?: string) {
     async (owner: string) => {
       if (identity.current !== owner) return;
       let remote = await gameBackend.progression();
-      for (let id = 1; id <= 50; id++) {
+      for (const { id } of COURSES) {
         if (identity.current !== owner) return;
         const time = current.current.best[id];
         if (time && (!remote.best[id] || time < remote.best[id]))
@@ -51,6 +52,7 @@ export function useProgression(userId?: string) {
     [save],
   );
   useEffect(() => {
+    if (!catalogRevision) return;
     identity.current = userId;
     let cancelled = false;
     let local = newProgression();
@@ -80,7 +82,7 @@ export function useProgression(userId?: string) {
       cancelled = true;
       window.removeEventListener('online', online);
     };
-  }, [userId, save, sync]);
+  }, [userId, save, sync, catalogRevision]);
   const finish = useCallback(
     (id: number, time: number) => {
       const owner = identity.current,

@@ -3,6 +3,38 @@ import { test } from 'node:test';
 import { buildCourse } from '../lib/course-builder.ts';
 import { buildRibbonGeometry, ribbonEdges } from '../lib/ribbon.ts';
 import { Simulation } from '../lib/simulation.ts';
+import { roadSurface } from '../lib/road-surface.ts';
+import { toLocal } from '../lib/routes.ts';
+
+void test('slalom joins have no interior cap borders after a turn or before a conveyor', () => {
+  for (const type of ['left', 'right'] as const) {
+    const course = buildCourse({
+      version: 1,
+      name: 'Seam check',
+      segments: [
+        { type, difficulty: 3 },
+        { type: 'slalom', difficulty: 3 },
+        { type: 'belt', difficulty: 3 },
+      ],
+    });
+    const slalom = course.ribbons!.at(-1)!;
+    for (const point of [slalom.points[0], slalom.points.at(-1)!]) {
+      assert.ok(point.yaw !== undefined);
+      for (const polygon of roadSurface(course))
+        for (const ring of polygon) {
+          for (let i = 1; i < ring.length; i++) {
+            const a = ring[i - 1],
+              b = ring[i];
+            const q = toLocal(point, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2);
+            assert.ok(
+              Math.abs(q.z) > 0.02 || Math.abs(q.x) >= 3.8,
+              'Interior seam would draw a rail across the road',
+            );
+          }
+        }
+    }
+  }
+});
 
 void test('continuous bend surfaces and both edge strips have supported floors and upward top faces', () => {
   for (const difficulty of [1, 2, 3] as const) {

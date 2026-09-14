@@ -1,6 +1,8 @@
 import { buildCourse, EXPANSION, type CourseRecipe } from './course-builder.ts';
 import type { CourseRibbon } from './ribbon.ts';
 import { COURSE_TARGETS } from './course-balance.ts';
+import { estimatedTargets } from './releases.ts';
+import { REWARDS } from './course-rewards.ts';
 
 export type Platform = {
   x: number;
@@ -173,3 +175,25 @@ export const COLORS = [
   '#ff64be',
   '#61c5ff',
 ];
+
+/** Keep stable published numbers while extending every solo and online course pool. */
+export function installCatalog(
+  levels: {
+    courseNumber: number;
+    recipe: CourseRecipe;
+    description: string;
+    retiredAt: string | null;
+  }[],
+) {
+  const added = levels
+    .filter(
+      (l) => !l.retiredAt && l.courseNumber >= 51 && l.courseNumber <= 10000,
+    )
+    .sort((a, b) => a.courseNumber - b.courseNumber)
+    .map((l) => ({
+      ...buildCourse(l.recipe, l.courseNumber),
+      description: l.description,
+      starTimes: REWARDS[l.courseNumber] ?? estimatedTargets(l.recipe),
+    }));
+  COURSES.splice(50, COURSES.length - 50, ...added);
+}

@@ -1,12 +1,13 @@
+import { t } from './i18n';
 import * as THREE from 'three';
 import { createAvatar } from './avatar';
 import { animateRacerRotation } from './racer-pose';
-import { buildRibbonGeometry } from './ribbon';
+import { isGroundDeck, roadSurface } from './road-surface';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { COLORS } from './courses';
 import { platformHeight, MODULES } from './course-builder';
 import { Simulation, obstaclePose } from './simulation';
-import { toWorld, routeAt, wrapAngle } from './routes';
+import { toWorld, toLocal, routeAt, wrapAngle } from './routes';
 import {
   normalizeCosmetics,
   DEFAULT_COSMETICS,
@@ -144,6 +145,7 @@ export class RaceScene {
     return m;
   }
   label(text: string, color = '#ffffff', background?: string) {
+    text = t(text);
     const c = document.createElement('canvas');
     c.width = 768;
     c.height = 160;
@@ -153,7 +155,10 @@ export class RaceScene {
       ctx.fillRect(0, 0, c.width, c.height);
     }
     ctx.fillStyle = color;
-    ctx.font = '900 76px Arial';
+    let fontSize = 76;
+    ctx.font = `900 ${fontSize}px Arial`;
+    while (ctx.measureText(text).width > c.width - 56 && fontSize > 16)
+      ctx.font = `900 ${--fontSize}px Arial`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(text, 384, 85);
@@ -219,7 +224,7 @@ export class RaceScene {
       this.world.add(island);
     }
     for (const p of c.platforms) {
-      if (p.ribbon !== undefined) {
+      if (p.ribbon !== undefined || isGroundDeck(p)) {
         this.platforms.push(null);
         continue;
       }
@@ -324,36 +329,61 @@ export class RaceScene {
         this.world.add(tileLine);
       }
     }
-    for (const ribbon of c.ribbons ?? []) {
-      for (const offset of [
-        null,
-        -ribbon.width / 2 + 0.18,
-        ribbon.width / 2 - 0.18,
-      ]) {
-        const rail = offset !== null;
-        const data = buildRibbonGeometry(
-          ribbon,
-          rail
-            ? { width: 0.22, offset, top: ribbon.y + 0.13, depth: 0.18 }
-            : {},
+    for (const polygon of roadSurface(c)) {
+      const shape = new THREE.Shape(
+        polygon[0].slice(0, -1).map(([x, z]) => new THREE.Vector2(x, z)),
+      );
+      for (const hole of polygon.slice(1))
+        shape.holes.push(
+          new THREE.Path(
+            hole.slice(0, -1).map(([x, z]) => new THREE.Vector2(x, z)),
+          ),
         );
-        const geometry = new THREE.BufferGeometry();
-        geometry.setAttribute(
-          'position',
-          new THREE.Float32BufferAttribute(data.positions, 3),
-        );
-        geometry.setAttribute(
-          'normal',
-          new THREE.Float32BufferAttribute(data.normals, 3),
-        );
-        geometry.setIndex(data.indices);
-        const material = this.material(rail ? c.accent : c.color);
-        if (rail) material.emissiveIntensity = 1.1;
-        const mesh = new THREE.Mesh(geometry, material);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        this.world.add(mesh);
-      }
+      const geometry = new THREE.ExtrudeGeometry(shape, {
+        depth: 0.815,
+        bevelEnabled: false,
+        steps: 1,
+        curveSegments: 1,
+      });
+      geometry.rotateX(-Math.PI / 2);
+      // Local extrusion +Z maps upward; the road top is shared with the physics deck.
+      geometry.translate(0, -0.85, 0);
+      const mesh = new THREE.Mesh(geometry, this.material(c.color));
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      this.world.add(mesh);
+      for (const ring of polygon)
+        for (let i = 1; i < ring.length; i++) {
+          const [ax, az] = ring[i - 1],
+            [bx, bz] = ring[i],
+            len = Math.hypot(bx - ax, bz - az);
+          if (len < 0.01) continue;
+          const x = (ax + bx) / 2,
+            z = (az + bz) / 2;
+          // Open the border where it meets a ramp, conveyor, or vanishing tile.
+          const connects = c.platforms.some((p) => {
+            if (p.ribbon !== undefined || isGroundDeck(p)) return false;
+            const q = toLocal(p, x, z);
+            return (
+              Math.abs(q.x) < p.w / 2 + 0.12 &&
+              Math.abs(q.z) < p.d / 2 + 0.12 &&
+              Math.abs(platformHeight(p, z, x)) < 0.25
+            );
+          });
+          if (connects) continue;
+          const rail = this.box(
+            0.18,
+            0.13,
+            len + 0.03,
+            c.accent,
+            x,
+            0.05,
+            -z,
+            0,
+          );
+          rail.rotation.y = -Math.atan2(bx - ax, bz - az);
+          this.world.add(rail);
+        }
     }
     for (const z of this.sim.course.checkpoints)
       this.arch(z, '#9ddeab', 'CHECKPOINT', false);
@@ -516,9 +546,8 @@ export class RaceScene {
     for (const [i, z] of c.checkpoints.entries()) {
       const sign = this.label(
         recipe
-          ? (MODULES.find(
-              (m) => m.key === recipe.segments[i]?.type,
-            )?.name.toUpperCase() ?? 'NEXT SECTOR')
+          ? (MODULES.find((m) => m.key === recipe.segments[i]?.type)?.name ??
+              'NEXT SECTOR')
           : i % 2
             ? 'COSMIC RUN'
             : c.name.toUpperCase(),
@@ -560,8 +589,12 @@ export class RaceScene {
       group = new THREE.Group();
     group.position.set(frame.x, 0, -frame.z);
     group.rotation.y = -frame.yaw;
+    const half = finish
+      ? 7.4
+      : (this.sim.course.gates?.find((g) => Math.abs(g.progress - z) < 0.1)
+          ?.halfWidth ?? 7) - 0.3;
     z = 0;
-    for (const x of [-7.4, 7.4])
+    for (const x of [-half, half])
       group.add(
         this.box(
           0.65,
@@ -576,7 +609,7 @@ export class RaceScene {
       );
     group.add(
       this.box(
-        15.5,
+        half * 2 + 0.7,
         finish ? 1.9 : 0.3,
         0.7,
         color,
@@ -591,7 +624,7 @@ export class RaceScene {
       l.position.set(0, 5.5, -z + 0.38);
       group.add(l);
     } else {
-      for (const x of [-7.4, 7.4])
+      for (const x of [-half, half])
         group.add(this.sphere(0.45, '#e5ffe3', x, 4, -z));
     }
     this.world.add(group);

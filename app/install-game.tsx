@@ -1,4 +1,6 @@
 'use client';
+import { t } from '@/lib/i18n';
+
 import { useEffect, useState } from 'react';
 import { Download } from 'lucide-react';
 type InstallEvent = Event & {
@@ -53,7 +55,7 @@ export default function InstallGame({
   if (controller.installed)
     return (
       <p className="tc-muted">
-        Game installed · ready to launch from your home screen.
+        {t('Game installed · ready to launch from your home screen.')}
       </p>
     );
   return (
@@ -66,13 +68,13 @@ export default function InstallGame({
         }}
       >
         <Download size={17} />
-        Install game
+        {t('Install game')}
       </button>
       {help && (
         <output>
-          On iPhone or iPad, open this game in Safari. Tap Share → Add to Home
-          Screen → Add. If shown, leave “Open as Web App” on. On Android or
-          desktop, use your browser menu → Install app or Add to Home Screen.
+          {t(
+            'On iPhone or iPad, open this game in Safari. Tap Share → Add to Home Screen → Add. If shown, leave “Open as Web App” on. On Android or desktop, use your browser menu → Install app or Add to Home Screen.',
+          )}
         </output>
       )}
     </div>

@@ -22,6 +22,7 @@ void test('database economy enforces identity, sequential completion, atomic spe
       '001-platform.sql',
       '002-status-snapshot.sql',
       '003-progression-shop.sql',
+      '004-course-releases.sql',
     ])
       await db.exec(
         await readFile(new URL('../backend/' + file, import.meta.url), 'utf8'),

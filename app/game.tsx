@@ -1,5 +1,14 @@
 'use client';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { t, getLanguage, subscribeLanguage } from '@/lib/i18n';
+import LanguageSelector from './language-selector';
+
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import {
   UserRound,
   Menu,
@@ -38,7 +47,7 @@ import {
 } from '@/components/ui/dialog';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Progress } from '@/components/ui/progress';
-import { COURSES, COLORS, type Course } from '@/lib/courses';
+import { COURSES, COLORS, installCatalog, type Course } from '@/lib/courses';
 import {
   buildCourse,
   parseRecipe,
@@ -178,8 +187,21 @@ export default function Game() {
     [joinCode, setJoinCode] = useState(''),
     [partyCourse, setPartyCourse] = useState(1),
     [copyState, setCopyState] = useState('');
+  const language = useSyncExternalStore(
+    subscribeLanguage,
+    getLanguage,
+    () => 'tr',
+  );
+  useEffect(() => {
+    document.documentElement.lang = language;
+    engine.current?.build();
+  }, [language]);
   const accountController = useAccount();
-  const progression = useProgression(accountController.session?.user.id);
+  const [catalogRevision, setCatalogRevision] = useState(0);
+  const progression = useProgression(
+    accountController.session?.user.id,
+    catalogRevision,
+  );
   const progressRef = useRef(progression);
   useEffect(() => {
     progressRef.current = progression;
@@ -189,7 +211,6 @@ export default function Game() {
     ...DEFAULT_COSMETICS,
   });
   const cosmeticsRef = useRef(cosmetics);
-  const [published, setPublished] = useState<PublishedLevel[]>([]);
   const [catalogError, setCatalogError] = useState('');
   const [cloudSaved, setCloudSaved] = useState<SavedRecipe[]>([]);
   const [editingPublished, setEditingPublished] =
@@ -212,9 +233,14 @@ export default function Game() {
   }, []);
   const refreshCatalog = useCallback(async () => {
     try {
-      setPublished(await gameBackend.publishedLevels());
+      const levels = await gameBackend.publishedLevels();
+      installCatalog(levels);
+      setCatalogRevision((n) => n + 1);
       setCatalogError('');
     } catch (error) {
+      const levels = gameBackend.cachedLevels();
+      installCatalog(levels);
+      setCatalogRevision((n) => n + 1);
       setCatalogError(backendMessage(error));
     }
   }, []);
@@ -601,13 +627,13 @@ export default function Game() {
       typeof selection === 'number' ? COURSES[selection] : selection;
     if (!nextCourse) return;
     if (
-      nextCourse.id <= COURSES.length &&
+      COURSES.some((c) => c.id === nextCourse.id) &&
       nextCourse.id > unlockedThrough(progressRef.current.progress)
     ) {
       setModal('courses');
       return;
     }
-    setSelected(nextCourse.recipe ? -1 : nextCourse.id - 1);
+    setSelected(COURSES.findIndex((c) => c.id === nextCourse.id));
     setActiveCourse(nextCourse);
     sim.current.reset(nextCourse);
     engine.current.build();
@@ -681,7 +707,7 @@ export default function Game() {
         prepare: (nextCourse) => {
           keys.current.clear();
           touch.current = { x: 0, z: 0 };
-          setSelected(nextCourse.recipe ? -1 : nextCourse.id - 1);
+          setSelected(COURSES.findIndex((c) => c.id === nextCourse.id));
           setActiveCourse(nextCourse);
           setPartyCourse(nextCourse.id);
           lastFinished.current = false;
@@ -717,9 +743,6 @@ export default function Game() {
         outfit,
         online,
       );
-      if (host)
-        for (const level of published.slice(0, 16))
-          room.addCourse(level.recipe);
     } catch (cause) {
       if (online) throw cause;
       setPartyView({
@@ -838,31 +861,33 @@ export default function Game() {
           <button
             className="brand"
             onClick={home}
-            aria-label="Tumble Club home"
+            aria-label={t('Tumble Club home')}
           >
             <span className="brand-symbol">
               <Sparkles size={25} strokeWidth={2.8} />
             </span>
             <span>
-              TUMBLE
+              {t('TUMBLE')}
               <span className="brand-bottom">
-                CLUB<span className="brand-dot">✦</span>
+                {t('CLUB')}
+                <span className="brand-dot">✦</span>
               </span>
             </span>
           </button>
           <div className="header-actions">
             <span
               className="star-wallet"
-              aria-label={
-                starBalance(progression.progress) + ' stars available'
-              }
+              aria-label={t(
+                starBalance(progression.progress) + ' stars available',
+              )}
             >
               <Star size={19} />
               <b>{starBalance(progression.progress)}</b>
             </span>
+            <LanguageSelector />
             <button
               className="icon-button menu-toggle"
-              aria-label="Open menu"
+              aria-label={t('Open menu')}
               aria-expanded={modal === 'menu'}
               onClick={() => setModal('menu')}
             >
@@ -872,26 +897,29 @@ export default function Game() {
         </header>
       )}
 
-      <section className="arena" aria-label="Tumble Club game">
+      <section className="arena" aria-label={t('Tumble Club game')}>
         <div className="scene-container" ref={container} />
         {!racing && (
           <>
             <div className="lobby-shade" />
             <div className="lobby-copy">
               <div className="eyebrow">
-                <Sparkles size={15} /> COSMIC ARCADE · 50 COURSES
+                <Sparkles size={15} />
+                {t(' COSMIC ARCADE') + ' · '}
+                {t(`${COURSES.length} COURSES`)}
               </div>
               <h1>
-                RACE THE
+                {t('RACE THE')}
                 <br />
                 <span>
-                  COSMOS<span className="title-star">✳</span>
+                  {t('COSMOS')}
+                  <span className="title-star">✳</span>
                 </span>
               </h1>
               <p>
-                Climb higher. Slide faster. Dodge meteors.
+                {t('Climb higher. Slide faster. Dodge meteors.')}
                 <br />
-                Build your own route and race your friends.
+                {t('Build your own route and race your friends.')}
               </p>
               <button
                 className="play-button"
@@ -899,11 +927,13 @@ export default function Game() {
                 disabled={!ready || !!error}
               >
                 <span>
-                  {ready
-                    ? inParty
-                      ? 'OPEN YOUR ROOM'
-                      : 'PLAY'
-                    : 'WARMING UP…'}
+                  {t(
+                    ready
+                      ? inParty
+                        ? 'OPEN YOUR ROOM'
+                        : 'PLAY'
+                      : 'WARMING UP…',
+                  )}
                 </span>
                 <ArrowUpRight size={29} />
               </button>
@@ -913,45 +943,55 @@ export default function Game() {
                   disabled={!ready}
                   onClick={() => setModal('matchmaking')}
                 >
-                  <Radar size={18} /> Find Online Game <ArrowRight size={17} />
+                  <Radar size={18} />
+                  {t(' Find Online Game ')}
+                  <ArrowRight size={17} />
                 </button>
                 <button
                   className="friends-button"
                   disabled={!ready}
                   onClick={() => setModal('party')}
                 >
-                  <Users size={18} /> Play with Friends <ArrowRight size={17} />
+                  <Users size={18} />
+                  {t(' Play with Friends ')}
+                  <ArrowRight size={17} />
                 </button>
               </div>
               <p className="home-progress">
-                Course {unlocked} / 50 unlocked · Earn stars. Find your style.
+                {t('Course ')}
+                {unlocked}
+                {t(
+                  ` / ${COURSES.length} unlocked · Earn stars. Find your style.`,
+                )}
               </p>
             </div>
             <div className="course-sticker">
               <span>
                 <i />
-                {course.recipe
-                  ? 'CUSTOM COURSE'
-                  : `COURSE ${String(selected + 1).padStart(2, '0')}`}
+                {t(
+                  selected < 0
+                    ? 'CUSTOM COURSE'
+                    : `COURSE ${String(selected + 1).padStart(2, '0')}`,
+                )}
               </span>
               <strong>{course.name}</strong>
               <div>
-                {course.difficulty}
+                {t(course.difficulty)}
                 <span>•</span>
-                {course.theme.toLowerCase()}
+                {t(course.theme.toLowerCase())}
               </div>
             </div>
           </>
         )}
         {error && (
           <div className="error-card" role="alert">
-            <h2>A small pit stop</h2>
-            <p>{error}</p>
+            <h2>{t('A small pit stop')}</h2>
+            <p>{t(error)}</p>
             <button
               className="secondary-button"
               onClick={() => window.location.reload()}
             >
-              Reload game
+              {t('Reload game')}
             </button>
           </div>
         )}
@@ -961,18 +1001,20 @@ export default function Game() {
               <div className="hud-course">
                 <button
                   className="icon-button"
-                  aria-label="Pause game"
+                  aria-label={t('Pause game')}
                   onClick={pause}
                 >
                   <Pause size={20} />
                 </button>
                 <div>
                   <span>
-                    {series
-                      ? `CHAMPIONSHIP · ROUND ${selected + 1}/${COURSES.length}`
-                      : course.recipe
-                        ? 'CUSTOM COURSE'
-                        : `COURSE ${String(selected + 1).padStart(2, '0')} / ${COURSES.length}`}
+                    {t(
+                      series
+                        ? `CHAMPIONSHIP · ROUND ${selected + 1}/${COURSES.length}`
+                        : selected < 0
+                          ? 'CUSTOM COURSE'
+                          : `COURSE ${String(selected + 1).padStart(2, '0')} / ${COURSES.length}`,
+                    )}
                   </span>
                   <h2>{course.name}</h2>
                 </div>
@@ -985,58 +1027,77 @@ export default function Game() {
                 </b>
               </div>
               <div className="hud-clock">
-                <span>TIME</span>
-                <strong>{formatTime(snap.time)}</strong>
+                <span>{t('TIME')}</span>
+                <strong>{t(formatTime(snap.time))}</strong>
               </div>
             </div>
             <div className="race-objective">
               <Flag size={16} />
-              {series
-                ? 'Finish in the top 8 to qualify!'
-                : inParty
-                  ? snap.place
-                    ? 'You finished! Waiting for your friends…'
-                    : `ROOM ${partyView.code} · Race your friends!`
-                  : 'Race to the finish!'}
-              <span>150s limit</span>
+              {t(
+                series
+                  ? 'Finish in the top 8 to qualify!'
+                  : inParty
+                    ? snap.place
+                      ? 'You finished! Waiting for your friends…'
+                      : `ROOM ${partyView.code} · Race your friends!`
+                    : 'Race to the finish!',
+              )}
+              <span>{t('150s limit')}</span>
             </div>
             {snap.state === 'countdown' && (
               <output className="countdown">
-                <span>GET READY</span>
+                <span>{t('GET READY')}</span>
                 <strong key={snap.countdown}>{snap.countdown || 'GO!'}</strong>
-                <p>{course.tip}</p>
+                <p>{t(course.tip)}</p>
               </output>
             )}
             {notice && snap.state === 'racing' && (
-              <output className="notice">{notice}</output>
+              <output className="notice">{t(notice)}</output>
             )}
             {inParty && partyView.error && (
               <output className="connection-notice" aria-live="polite">
-                {partyView.error}
+                {t(partyView.error)}
               </output>
             )}
             <div className="race-bottom">
               <div className="keyboard-hint">
-                <kbd>W A S D</kbd> Move <span />
-                <kbd>SPACE</kbd> Jump <span />
-                <kbd>SHIFT</kbd> Dive{' '}
-                {snap.diveCooldown > 0
-                  ? Math.ceil(snap.diveCooldown) + 's'
-                  : '✓'}
+                <kbd>W A S D</kbd>
+                {t(' Move ')}
                 <span />
-                <kbd>F</kbd> Kick{' '}
-                {snap.kickCooldown > 0
-                  ? Math.ceil(snap.kickCooldown) + 's'
-                  : '✓'}
+                <kbd>{t('SPACE')}</kbd>
+                {t(' Jump ')}
+                <span />
+                <kbd>{t('SHIFT')}</kbd>
+                {t(' Dive')}
+                {t(' ')}
+                {t(
+                  snap.diveCooldown > 0
+                    ? Math.ceil(snap.diveCooldown) + 's'
+                    : '✓',
+                )}
+                <span />
+                <kbd>F</kbd>
+                {t(' Kick')}
+                {t(' ')}
+                {t(
+                  snap.kickCooldown > 0
+                    ? Math.ceil(snap.kickCooldown) + 's'
+                    : '✓',
+                )}
               </div>
               <div className="race-progress">
-                <span>START</span>
-                <Progress value={snap.progress} aria-label="Course progress" />
+                <span>{t('START')}</span>
+                <Progress
+                  value={snap.progress}
+                  aria-label={t('Course progress')}
+                />
                 <Flag size={17} />
               </div>
               <button
                 className="icon-button"
-                aria-label={fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+                aria-label={t(
+                  fullscreen ? 'Exit fullscreen' : 'Enter fullscreen',
+                )}
                 onClick={() => {
                   if (document.fullscreenElement)
                     void document.exitFullscreen();
@@ -1055,7 +1116,7 @@ export default function Game() {
               <div className="touch-controls">
                 <div
                   className="joystick"
-                  aria-label="Drag to move"
+                  aria-label={t('Drag to move')}
                   onPointerDown={(e) => {
                     e.currentTarget.setPointerCapture(e.pointerId);
                     touchMove(e);
@@ -1078,7 +1139,7 @@ export default function Game() {
                 </div>
                 <div className="touch-actions">
                   <button
-                    aria-label="Kick"
+                    aria-label={t('Kick')}
                     disabled={snap.kickCooldown > 0}
                     onPointerDown={(e) => {
                       e.preventDefault();
@@ -1093,12 +1154,14 @@ export default function Game() {
                         sim.current.input.kick = true;
                     }}
                   >
-                    {snap.kickCooldown > 0
-                      ? Math.ceil(snap.kickCooldown) + 's'
-                      : 'KICK'}
+                    {t(
+                      snap.kickCooldown > 0
+                        ? Math.ceil(snap.kickCooldown) + 's'
+                        : 'KICK',
+                    )}
                   </button>
                   <button
-                    aria-label="Dive"
+                    aria-label={t('Dive')}
                     disabled={snap.diveCooldown > 0}
                     onKeyDown={(e) => {
                       if (
@@ -1113,12 +1176,14 @@ export default function Game() {
                       if (sim.current) sim.current.input.dive = true;
                     }}
                   >
-                    {snap.diveCooldown > 0
-                      ? Math.ceil(snap.diveCooldown) + 's'
-                      : 'DIVE'}
+                    {t(
+                      snap.diveCooldown > 0
+                        ? Math.ceil(snap.diveCooldown) + 's'
+                        : 'DIVE',
+                    )}
                   </button>
                   <button
-                    aria-label="Jump"
+                    aria-label={t('Jump')}
                     onKeyDown={(e) => {
                       if (
                         (e.key === 'Enter' || e.key === ' ') &&
@@ -1132,7 +1197,7 @@ export default function Game() {
                       if (sim.current) sim.current.input.jump = true;
                     }}
                   >
-                    JUMP
+                    {t('JUMP')}
                     <ArrowUp size={19} />
                   </button>
                 </div>
@@ -1149,6 +1214,7 @@ export default function Game() {
         }}
       >
         <DialogContent
+          closeLabel={t('Close')}
           className={
             modal === 'outfit'
               ? 'game-dialog shop-dialog'
@@ -1162,48 +1228,52 @@ export default function Game() {
           }
         >
           <DialogTitle>
-            {modal === 'menu'
-              ? 'Your cosmic club.'
-              : modal === 'account'
-                ? 'Your player account.'
-                : modal === 'matchmaking'
-                  ? 'Race with the world.'
-                  : modal === 'staff'
-                    ? 'Your design studio.'
-                    : modal === 'outfit'
-                      ? 'Make your racer yours.'
-                      : modal === 'builder'
-                        ? 'Build your next challenge.'
-                        : modal === 'party'
-                          ? 'Better with friends.'
-                          : modal === 'courses'
-                            ? 'Pick your playground.'
-                            : modal === 'help'
-                              ? 'A crash course in tumbling.'
-                              : 'Taking a breather?'}
+            {t(
+              modal === 'menu'
+                ? 'Your cosmic club.'
+                : modal === 'account'
+                  ? 'Your player account.'
+                  : modal === 'matchmaking'
+                    ? 'Race with the world.'
+                    : modal === 'staff'
+                      ? 'Your design studio.'
+                      : modal === 'outfit'
+                        ? 'Make your racer yours.'
+                        : modal === 'builder'
+                          ? 'Build your next challenge.'
+                          : modal === 'party'
+                            ? 'Better with friends.'
+                            : modal === 'courses'
+                              ? 'Pick your playground.'
+                              : modal === 'help'
+                                ? 'A crash course in tumbling.'
+                                : 'Taking a breather?',
+            )}
           </DialogTitle>
           <DialogDescription>
-            {modal === 'menu'
-              ? 'Courses, style and everything in between.'
-              : modal === 'account'
-                ? 'Save your look and courses across devices.'
-                : modal === 'matchmaking'
-                  ? 'Search for five real players and stay together between rounds.'
-                  : modal === 'staff'
-                    ? 'Create courses for the whole club.'
-                    : modal === 'outfit'
-                      ? 'Try on 56 wearables. Earn stars to unlock your favorites.'
-                      : modal === 'builder'
-                        ? 'Arrange sections, test your route, and add it to your friend room.'
-                        : modal === 'party'
-                          ? 'Create a room, share the code, and race together. Up to 8 friends.'
-                          : modal === 'courses'
-                            ? 'Finish each course to unlock the next. Every finish earns at least one star.'
-                            : modal === 'help'
-                              ? 'A little timing goes a long way. Here’s everything you need.'
-                              : inParty
-                                ? 'Online races keep running while this menu is open.'
-                                : 'Your race is paused. Your rivals can wait.'}
+            {t(
+              modal === 'menu'
+                ? 'Courses, style and everything in between.'
+                : modal === 'account'
+                  ? 'Save your look and courses across devices.'
+                  : modal === 'matchmaking'
+                    ? 'Search for five real players and stay together between rounds.'
+                    : modal === 'staff'
+                      ? 'Create courses for the whole club.'
+                      : modal === 'outfit'
+                        ? 'Try on 56 wearables. Earn stars to unlock your favorites.'
+                        : modal === 'builder'
+                          ? 'Arrange sections, test your route, and add it to your friend room.'
+                          : modal === 'party'
+                            ? 'Create a room, share the code, and race together. Up to 8 friends.'
+                            : modal === 'courses'
+                              ? 'Finish each course to unlock the next. Every finish earns at least one star.'
+                              : modal === 'help'
+                                ? 'A little timing goes a long way. Here’s everything you need.'
+                                : inParty
+                                  ? 'Online races keep running while this menu is open.'
+                                  : 'Your race is paused. Your rivals can wait.',
+            )}
           </DialogDescription>
           {modal === 'account' && (
             <AccountPanel
@@ -1224,62 +1294,71 @@ export default function Game() {
               <button onClick={() => setModal('courses')}>
                 <Flag />
                 <span>
-                  Courses<small>{unlocked} of 50 unlocked</small>
+                  {t('Courses')}
+                  <small>
+                    {unlocked}
+                    {t(` of ${COURSES.length} unlocked`)}
+                  </small>
                 </span>
                 <ChevronRight />
               </button>
               <button disabled={inParty} onClick={() => setModal('outfit')}>
                 <Shirt />
                 <span>
-                  Star shop & outfits<small>56 ways to make it yours</small>
+                  {t('Star shop & outfits')}
+                  <small>{t('56 ways to make it yours')}</small>
                 </span>
                 <ChevronRight />
               </button>
               <button onClick={() => setModal('builder')}>
                 <Hammer />
                 <span>
-                  Course builder
-                  <small>Create a challenge for your friends</small>
+                  {t('Course builder')}
+                  <small>{t('Create a challenge for your friends')}</small>
                 </span>
                 <ChevronRight />
               </button>
               <button onClick={() => setModal('account')}>
                 <UserRound />
                 <span>
-                  {accountController.account?.profile?.username ??
-                    'Your account'}
-                  <small>Sign in, save and sync</small>
+                  {t(
+                    accountController.account?.profile?.username ??
+                      'Your account',
+                  )}
+                  <small>{t('Sign in, save and sync')}</small>
                 </span>
                 <ChevronRight />
               </button>
               <button onClick={() => setModal('help')}>
                 <Gamepad2 />
-                <span>How to play</span>
+                <span>{t('How to play')}</span>
                 <ChevronRight />
               </button>
               <details className="menu-settings">
-                <summary>Race & audio settings</summary>
+                <summary>{t('Race & audio settings')}</summary>
                 <RadioGroup
                   value={mode}
                   onValueChange={(v) => setMode(String(v))}
-                  aria-label="Race mode"
+                  aria-label={t('Race mode')}
                   className="mode-picker"
                 >
                   <label className="mode-option" htmlFor="quick-race-mode">
                     <RadioGroupItem id="quick-race-mode" value="race" />
-                    Quick race
+                    {t('Quick race')}
                   </label>
                   <label className="mode-option" htmlFor="championship-mode">
                     <RadioGroupItem
                       id="championship-mode"
                       value="championship"
                     />
-                    Championship
+                    {t('Championship')}
                   </label>
                 </RadioGroup>
                 <button className="tc-secondary" onClick={toggleSound}>
-                  {muted ? <VolumeX size={18} /> : <Volume2 size={18} />} Sound{' '}
-                  {muted ? 'off' : 'on'}
+                  {muted ? <VolumeX size={18} /> : <Volume2 size={18} />}
+                  {t(' Sound')}
+                  {t(' ')}
+                  {t(muted ? 'off' : 'on')}
                 </button>
                 <button
                   className="tc-secondary"
@@ -1293,7 +1372,9 @@ export default function Game() {
                     } catch {}
                   }}
                 >
-                  <AudioLines size={18} /> Music {music ? 'on' : 'off'}
+                  <AudioLines size={18} />
+                  {t(' Music ')}
+                  {t(music ? 'on' : 'off')}
                 </button>
               </details>
               <InstallGame controller={install} />
@@ -1320,7 +1401,7 @@ export default function Game() {
                 }
               />
               {progression.message && (
-                <output className="tc-muted">{progression.message}</output>
+                <output className="tc-muted">{t(progression.message)}</output>
               )}
             </>
           )}
@@ -1336,6 +1417,7 @@ export default function Game() {
             <StaffPanel
               account={accountController.account}
               draft={editorDraft}
+              saved={cloudSaved}
               editing={editingPublished}
               setEditing={setEditingPublished}
               onEdit={(recipe) => {
@@ -1343,7 +1425,11 @@ export default function Game() {
                 setEditingKey(undefined);
                 setModal('builder');
               }}
-              onPublished={refreshCatalog}
+              onPublished={async () => {
+                await refreshCatalog();
+                if (accountController.account)
+                  setCloudSaved(await gameBackend.savedRecipes());
+              }}
             />
           )}
           {modal === 'builder' && (
@@ -1355,7 +1441,7 @@ export default function Game() {
                     onClick={() => setModal('staff')}
                   >
                     <ShieldCheck size={17} />
-                    Publish &amp; manage courses
+                    {t('Publish &amp; manage courses')}
                   </button>
                 )}
               <CourseEditor
@@ -1388,18 +1474,18 @@ export default function Game() {
             <div className="party-content">
               {partyView.error && (
                 <p className="party-error" role="alert">
-                  {partyView.error}
+                  {t(partyView.error)}
                 </p>
               )}
               {!inParty ? (
                 <>
-                  <label htmlFor="player-name">Your racer name</label>
+                  <label htmlFor="player-name">{t('Your racer name')}</label>
                   <Input
                     id="player-name"
                     maxLength={24}
                     value={playerName}
                     onChange={(e) => setPlayerName(e.target.value)}
-                    placeholder="Tumbler"
+                    placeholder={t('Tumbler')}
                     disabled={partyView.status === 'connecting'}
                   />
                   <button
@@ -1407,13 +1493,17 @@ export default function Game() {
                     disabled={!ready || partyView.status === 'connecting'}
                     onClick={() => void connectParty(true)}
                   >
-                    {partyView.status === 'connecting'
-                      ? 'CONNECTING…'
-                      : 'CREATE A ROOM'}
+                    {t(
+                      partyView.status === 'connecting'
+                        ? 'CONNECTING…'
+                        : 'CREATE A ROOM',
+                    )}
                     <Users size={23} />
                   </button>
-                  <div className="party-divider">or join your friends</div>
-                  <label htmlFor="room-code">Room code</label>
+                  <div className="party-divider">
+                    {t('or join your friends')}
+                  </div>
+                  <label htmlFor="room-code">{t('Room code')}</label>
                   <div className="join-row">
                     <Input
                       id="room-code"
@@ -1426,7 +1516,7 @@ export default function Game() {
                             .slice(0, 8),
                         )
                       }
-                      placeholder="ABCDEFGH"
+                      placeholder={t('ABCDEFGH')}
                       maxLength={8}
                       autoCapitalize="characters"
                       spellCheck={false}
@@ -1441,36 +1531,40 @@ export default function Game() {
                       }
                       onClick={() => void connectParty(false)}
                     >
-                      Join <ArrowRight size={17} />
+                      {t('Join ')}
+                      <ArrowRight size={17} />
                     </button>
                   </div>
                   <p className="party-note">
-                    The host runs the room and needs to keep this tab active.
-                    Some work, school, or VPN networks may block direct
-                    connections; try a home network or mobile hotspot.
+                    {t(
+                      'The host runs the room and needs to keep this tab active. Some work, school, or VPN networks may block direct connections; try a home network or mobile hotspot.',
+                    )}
                   </p>
                 </>
               ) : (
                 <>
                   <div className="invite-box">
                     <div>
-                      <span>ROOM CODE</span>
-                      <strong>{partyView.code}</strong>
+                      <span>{t('ROOM CODE')}</span>
+                      <strong>{t(partyView.code)}</strong>
                     </div>
                     <button
                       className="icon-button"
-                      aria-label="Copy invitation link"
+                      aria-label={t('Copy invitation link')}
                       onClick={() => void copyInvite()}
                     >
                       <Copy size={21} />
                     </button>
                   </div>
                   {copyState && (
-                    <output className="copy-feedback">{copyState}</output>
+                    <output className="copy-feedback">{t(copyState)}</output>
                   )}
                   <div className="roster-heading">
-                    <strong>On the starting line</strong>
-                    <span>{partyView.members.length} / 8 friends</span>
+                    <strong>{t('On the starting line')}</strong>
+                    <span>
+                      {partyView.members.length}
+                      {t(' / 8 friends')}
+                    </span>
                   </div>
                   <ul className="party-roster">
                     {partyView.members.map((p) => (
@@ -1480,13 +1574,14 @@ export default function Game() {
                           style={{ background: COLORS[p.color] }}
                         />
                         <strong>
-                          {p.name}
-                          {p.id === partyView.self ? ' (you)' : ''}
+                          {t(p.name)}
+                          {t(p.id === partyView.self ? ' (you)' : '')}
                         </strong>
                         <span>
                           {p.host ? (
                             <>
-                              <Crown size={14} /> Host
+                              <Crown size={14} />
+                              {t(' Host')}
                             </>
                           ) : (
                             'Ready'
@@ -1496,12 +1591,15 @@ export default function Game() {
                     ))}
                   </ul>
                   <p className="party-note">
-                    Empty places are filled by bots. Everyone races under the
-                    same rules.
+                    {t(
+                      'Empty places are filled by bots. Everyone races under the same rules.',
+                    )}
                   </p>
                   {partyView.host && partyView.status === 'waiting' && (
                     <>
-                      <label htmlFor="party-course">Choose a course</label>
+                      <label htmlFor="party-course">
+                        {t('Choose a course')}
+                      </label>
                       <NativeSelect
                         id="party-course"
                         value={partyCourse}
@@ -1509,10 +1607,12 @@ export default function Game() {
                       >
                         {roomCourses.map((c) => (
                           <NativeSelectOption key={c.id} value={c.id}>
-                            {c.recipe
-                              ? 'Custom'
-                              : String(c.id).padStart(2, '0')}{' '}
-                            · {c.name}
+                            {t(
+                              c.recipe
+                                ? 'Custom'
+                                : String(c.id).padStart(2, '0'),
+                            )}
+                            {t(' ')}· {c.name}
                           </NativeSelectOption>
                         ))}
                       </NativeSelect>
@@ -1526,26 +1626,28 @@ export default function Game() {
                           )
                         }
                       >
-                        START RACE <Flag size={23} />
+                        {t('START RACE ')}
+                        <Flag size={23} />
                       </button>
                       {partyView.members.length < 2 && (
                         <p className="party-note">
-                          Share your invitation and wait for at least one
-                          friend.
+                          {t(
+                            'Share your invitation and wait for at least one friend.',
+                          )}
                         </p>
                       )}
                     </>
                   )}
                   <div className="room-rotation">
-                    <strong>Keep the party going</strong>
+                    <strong>{t('Keep the party going')}</strong>
                     <p>
-                      Every race ends with a 5-second countdown, then a random
-                      course starts. This room stays together until the host
-                      leaves.
+                      {t(
+                        'Every race ends with a 5-second countdown, then a random course starts. This room stays together until the host leaves.',
+                      )}
                     </p>
                     {partyView.host ? (
                       <NativeSelect
-                        aria-label="Automatic course rotation"
+                        aria-label={t('Automatic course rotation')}
                         value={partyView.rotation}
                         onChange={(e) =>
                           party.current?.setRotation(
@@ -1554,44 +1656,48 @@ export default function Game() {
                         }
                       >
                         <NativeSelectOption value="all">
-                          All 50 courses + room creations
+                          {t('All courses + room creations')}
                         </NativeSelectOption>
                         <NativeSelectOption
                           value="custom"
                           disabled={!partyView.customCourses.length}
                         >
-                          Room creations only
+                          {t('Room creations only')}
                         </NativeSelectOption>
                       </NativeSelect>
                     ) : (
                       <p>
-                        Rotation:{' '}
-                        {partyView.rotation === 'custom'
-                          ? 'Room creations'
-                          : 'All courses + room creations'}
+                        {t('Rotation:')}
+                        {t(' ')}
+                        {t(
+                          partyView.rotation === 'custom'
+                            ? 'Room creations'
+                            : 'All courses + room creations',
+                        )}
                       </p>
                     )}
                     <button
                       className="secondary-button"
                       onClick={() => setModal('builder')}
                     >
-                      <Hammer size={18} /> Build and add a course
+                      <Hammer size={18} />
+                      {t(' Build and add a course')}
                     </button>
                     <span>
-                      {partyView.customCourses.length} / 16 custom courses in
-                      this room
+                      {partyView.customCourses.length}
+                      {t(' / 16 custom courses in this room')}
                     </span>
                     {partyView.customCourses.length > 0 && (
                       <ul>
                         {partyView.customCourses.map((r) => (
-                          <li key={recipeKey(r)}>{r.name}</li>
+                          <li key={recipeKey(r)}>{t(r.name)}</li>
                         ))}
                       </ul>
                     )}
                   </div>
                   {!partyView.host && partyView.status === 'waiting' && (
                     <div className="waiting-host">
-                      Waiting for the host to start the race…
+                      {t('Waiting for the host to start the race…')}
                     </div>
                   )}
                   {partyView.status === 'racing' && (
@@ -1599,11 +1705,13 @@ export default function Game() {
                       className="play-button"
                       onClick={() => setModal(null)}
                     >
-                      BACK TO THE RACE <Play size={22} />
+                      {t('BACK TO THE RACE ')}
+                      <Play size={22} />
                     </button>
                   )}
                   <button className="text-button" onClick={leaveParty}>
-                    Leave room <ArrowUpRight size={16} />
+                    {t('Leave room ')}
+                    <ArrowUpRight size={16} />
                   </button>
                 </>
               )}
@@ -1617,7 +1725,7 @@ export default function Game() {
                   <button
                     key={c.id}
                     disabled={c.id > unlocked}
-                    aria-label={c.name + (c.id > unlocked ? ', locked' : '')}
+                    aria-label={c.name + (c.id > unlocked ? t(', locked') : '')}
                     onClick={() => load(i)}
                     className={
                       selected === i
@@ -1627,36 +1735,47 @@ export default function Game() {
                   >
                     <div className="grid-thumbnail">
                       <CourseMap index={i} />
-                      <span>{String(c.id).padStart(2, '0')}</span>
+                      <span>{t(String(c.id).padStart(2, '0'))}</span>
                     </div>
                     <div>
                       <strong>{c.name}</strong>
+                      {c.id > 50 && c.description && (
+                        <p className="published-course-description">
+                          {c.description}
+                        </p>
+                      )}
                       <span
                         className="course-stars"
-                        aria-label={
+                        aria-label={t(
                           starsFor(c.id, progression.progress.best[c.id]) +
-                          ' stars'
-                        }
-                      >
-                        {'★'.repeat(
-                          starsFor(c.id, progression.progress.best[c.id]),
+                            ' stars',
                         )}
-                        {'☆'.repeat(
-                          3 - starsFor(c.id, progression.progress.best[c.id]),
+                      >
+                        {t(
+                          '★'.repeat(
+                            starsFor(c.id, progression.progress.best[c.id]),
+                          ),
+                        )}
+                        {t(
+                          '☆'.repeat(
+                            3 - starsFor(c.id, progression.progress.best[c.id]),
+                          ),
                         )}
                       </span>
                       <span className="star-targets">
-                        ★★★ {c.starTimes?.gold}s · ★★ {c.starTimes?.silver}s · ★
-                        Finish
+                        ★★★ {c.starTimes?.gold}s · ★★ {c.starTimes?.silver}
+                        {t('s · ★ Finish')}
                       </span>
                       <small>
                         <Icon size={13} />
-                        {c.difficulty}
-                        {c.id > unlocked
-                          ? ' · Locked'
-                          : progression.progress.best[c.id]
-                            ? ` · Best ${formatTime(progression.progress.best[c.id])}`
-                            : ' · Ready'}
+                        {t(c.difficulty)}
+                        {t(
+                          c.id > unlocked
+                            ? ' · Locked'
+                            : progression.progress.best[c.id]
+                              ? ` · Best ${formatTime(progression.progress.best[c.id])}`
+                              : ' · Ready',
+                        )}
                       </small>
                     </div>
                   </button>
@@ -1665,133 +1784,104 @@ export default function Game() {
             </div>
           )}
           {modal === 'courses' && (
-            <section className="community-courses">
-              <h3>
-                Designer courses <span>{published.length}</span>
-              </h3>
-              {catalogError ? (
-                <p role="alert">{catalogError}</p>
-              ) : published.length === 0 ? (
-                <p>
-                  New courses from the club&apos;s designers will appear here.
-                </p>
-              ) : (
-                <div className="community-grid">
-                  {published.map((level) => {
-                    const c = buildCourse(level.recipe);
-                    return (
-                      <button
-                        key={level.id}
-                        onClick={() => {
-                          if (inParty) {
-                            party.current?.addCourse(level.recipe);
-                            setModal('party');
-                          } else {
-                            setSeries(false);
-                            load(c);
-                          }
-                        }}
-                      >
-                        <RouteMap course={c} />
-                        <strong>{c.name}</strong>
-                        <span>
-                          {c.difficulty} · {c.recipe?.segments.length} sections
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
+            <p className="catalog-release">
+              {t(
+                catalogError ||
+                  `Main courses · ${COURSES.length} courses · ${gameBackend.catalogVersion}`,
               )}
-            </section>
+            </p>
           )}
           {modal === 'help' && (
             <div className="help-content">
               <div className="help-row">
                 <span>
                   <kbd>W A S D</kbd>
-                  <small>or arrow keys</small>
+                  <small>{t('or arrow keys')}</small>
                 </span>
                 <div>
-                  <strong>Find your feet</strong>
+                  <strong>{t('Find your feet')}</strong>
                   <p>
-                    Move forward, backward, and sideways. Up always moves toward
-                    the camera’s direction. Steer into turns as the camera
-                    follows.
+                    {t(
+                      'Move forward, backward, and sideways. Up always moves toward the camera’s direction. Steer into turns as the camera follows.',
+                    )}
                   </p>
                 </div>
               </div>
               <div className="help-row">
-                <kbd>SPACE</kbd>
+                <kbd>{t('SPACE')}</kbd>
                 <div>
-                  <strong>Catch some air</strong>
+                  <strong>{t('Catch some air')}</strong>
                   <p>
-                    Jump over obstacles and gaps. Get a running start for longer
-                    jumps.
+                    {t(
+                      'Jump over obstacles and gaps. Get a running start for longer jumps.',
+                    )}
                   </p>
                 </div>
               </div>
               <div className="help-row">
                 <span>
-                  <kbd>SHIFT</kbd>
-                  <small>or E</small>
+                  <kbd>{t('SHIFT')}</kbd>
+                  <small>{t('or E')}</small>
                 </span>
                 <div>
-                  <strong>Commit to the dive</strong>
+                  <strong>{t('Commit to the dive')}</strong>
                   <p>
-                    Press in the air to launch forward. Diving recharges in 5
-                    seconds.
+                    {t(
+                      'Press in the air to launch forward. Diving recharges in 5 seconds.',
+                    )}
                   </p>
                 </div>
               </div>
               <div className="help-row">
                 <span>
                   <kbd>R</kbd>
-                  <small>ESC to pause</small>
+                  <small>{t('ESC to pause')}</small>
                 </span>
                 <div>
-                  <strong>Try, tumble, repeat</strong>
+                  <strong>{t('Try, tumble, repeat')}</strong>
                   <p>
-                    Return to your last checkpoint. Green arches save your
-                    position.
+                    {t(
+                      'Return to your last checkpoint. Green arches save your position.',
+                    )}
                   </p>
                 </div>
               </div>
               <div className="help-row">
                 <kbd>F</kbd>
                 <div>
-                  <strong>Make some space</strong>
+                  <strong>{t('Make some space')}</strong>
                   <p>
-                    Kick a nearby runner in front of you to knock them off
-                    balance for one second. Kicking recharges in five seconds.
+                    {t(
+                      'Kick a nearby runner in front of you to knock them off balance for one second. Kicking recharges in five seconds.',
+                    )}
                   </p>
                 </div>
               </div>
               <div className="help-note">
                 <Gamepad2 size={22} />
                 <p>
-                  On a touchscreen, use the left pad to steer and the right
-                  buttons to jump, dive and kick.
+                  {t(
+                    'On a touchscreen, use the left pad to steer and the right buttons to jump, dive and kick.',
+                  )}
                 </p>
               </div>
               <p className="help-fine">
-                Install from your browser&apos;s app menu. On iPhone or iPad,
-                open in Safari, tap Share, then Add to Home Screen. Solo play
-                works offline after the game has downloaded; online rooms and
-                accounts need a connection.
+                {t(
+                  'Install from your browser&apos;s app menu. On iPhone or iPad, open in Safari, tap Share, then Add to Home Screen. Solo play works offline after the game has downloaded; online rooms and accounts need a connection.',
+                )}
               </p>
               <p className="help-fine">
-                Quick race: finish any course within 150 seconds. Championship:
-                place in the top 8 in all 50 rounds. Your course records are
-                saved on this device, or synced with your account. Improve your
-                best times to earn up to three stars per course. Online rooms
-                can race all courses; solo unlocks advance in order.
+                {t(
+                  'Quick race: finish any course within 150 seconds. Championship: place in the top 8 in all 50 rounds. Your course records are saved on this device, or synced with your account. Improve your best times to earn up to three stars per course. Online rooms can race all courses; solo unlocks advance in order.',
+                )}
               </p>
             </div>
           )}
           {modal === 'pause' && (
             <div className="pause-actions">
               <button className="play-button" onClick={closeModal}>
-                BACK TO THE CHAOS <Play size={22} />
+                {t('BACK TO THE CHAOS ')}
+                <Play size={22} />
               </button>
               {!inParty && (
                 <button
@@ -1799,26 +1889,28 @@ export default function Game() {
                   onClick={() => load(course, true)}
                 >
                   <RotateCcw size={17} />
-                  Restart course
+                  {t('Restart course')}
                 </button>
               )}
               <button className="secondary-button" onClick={toggleSound}>
-                {muted ? <VolumeX size={17} /> : <Volume2 size={17} />}Sound{' '}
-                {muted ? 'off' : 'on'}
+                {muted ? <VolumeX size={17} /> : <Volume2 size={17} />}
+                {t('Sound')}
+                {t(' ')}
+                {t(muted ? 'off' : 'on')}
               </button>
               <button
                 className="secondary-button"
                 onClick={() => setModal(inParty ? 'party' : 'builder')}
               >
                 <Hammer size={17} />
-                {inParty ? 'Room & course builder' : 'Course builder'}
+                {t(inParty ? 'Room & course builder' : 'Course builder')}
               </button>
               <button
                 className="text-button"
                 onClick={inParty ? leaveParty : home}
               >
                 <ArrowLeft size={16} />
-                {inParty ? 'Leave room' : 'Back to lobby'}
+                {t(inParty ? 'Leave room' : 'Back to lobby')}
               </button>
             </div>
           )}
@@ -1843,72 +1935,87 @@ export default function Game() {
             )}
           </div>
           <span className="section-kicker">
-            {series && selected === COURSES.length - 1 && qualified
-              ? 'CHAMPIONSHIP COMPLETE'
-              : snap.place
-                ? 'FINISH LINE, MEET LEGEND.'
-                : 'ONE MORE GO?'}
+            {t(
+              series && selected === COURSES.length - 1 && qualified
+                ? 'CHAMPIONSHIP COMPLETE'
+                : snap.place
+                  ? 'FINISH LINE, MEET LEGEND.'
+                  : 'ONE MORE GO?',
+            )}
           </span>
           <DialogTitle>
-            {series
-              ? qualified
-                ? selected === COURSES.length - 1
-                  ? 'THE CROWN IS YOURS!'
-                  : 'QUALIFIED!'
-                : 'SO CLOSE!'
-              : snap.place
-                ? snap.rank === 1
-                  ? 'FIRST CLASS TUMBLE!'
-                  : 'WHAT A FINISH!'
-                : 'TIME’S UP!'}
+            {t(
+              series
+                ? qualified
+                  ? selected === COURSES.length - 1
+                    ? 'THE CROWN IS YOURS!'
+                    : 'QUALIFIED!'
+                  : 'SO CLOSE!'
+                : snap.place
+                  ? snap.rank === 1
+                    ? 'FIRST CLASS TUMBLE!'
+                    : 'WHAT A FINISH!'
+                  : 'TIME’S UP!',
+            )}
           </DialogTitle>
           <DialogDescription>
-            {series && !qualified
-              ? 'Finish in the top 8 to continue your championship.'
-              : !snap.place
-                ? 'The 150-second clock ran out. Your next run starts fresh.'
-                : course.description}
+            {t(
+              series && !qualified
+                ? 'Finish in the top 8 to continue your championship.'
+                : !snap.place
+                  ? 'The 150-second clock ran out. Your next run starts fresh.'
+                  : course.description,
+            )}
           </DialogDescription>
           {course.starTimes && (
             <div className="result-stars">
               <strong>
-                {snap.place
-                  ? '★'.repeat(starsFor(course.id, snap.finishTime)) +
-                    '☆'.repeat(3 - starsFor(course.id, snap.finishTime))
-                  : '☆☆☆'}
+                {t(
+                  snap.place
+                    ? '★'.repeat(starsFor(course.id, snap.finishTime)) +
+                        '☆'.repeat(3 - starsFor(course.id, snap.finishTime))
+                    : '☆☆☆',
+                )}
               </strong>
               <span>
-                ★★★ {course.starTimes.gold}s · ★★ {course.starTimes.silver}s · ★
-                Finish
+                ★★★ {course.starTimes.gold}s · ★★ {course.starTimes.silver}
+                {t('s · ★ Finish')}
               </span>
               <small>
-                {course.id > unlocked
-                  ? 'Finish earlier solo courses to earn these stars.'
-                  : 'Best runs earn stars once. Beat your best to earn more.'}
+                {t(
+                  course.id > unlocked
+                    ? 'Finish earlier solo courses to earn these stars.'
+                    : 'Best runs earn stars once. Beat your best to earn more.',
+                )}
               </small>
             </div>
           )}
           <div className="result-stats">
             <div>
-              <span>PLACE</span>
-              <strong>{snap.place ? `#${snap.rank}` : '—'}</strong>
+              <span>{t('PLACE')}</span>
+              <strong>{t(snap.place ? `#${snap.rank}` : '—')}</strong>
             </div>
             <div>
-              <span>TIME</span>
-              <strong>{formatTime(snap.finishTime || snap.time)}</strong>
+              <span>{t('TIME')}</span>
+              <strong>{t(formatTime(snap.finishTime || snap.time))}</strong>
             </div>
             <div>
-              <span>TUMBLES</span>
+              <span>{t('TUMBLES')}</span>
               <strong>{snap.falls}</strong>
             </div>
           </div>
           {series && (
             <p className="series-score">
-              Championship points{' '}
+              {t('Championship points')}
+              {t(' ')}
               <strong>
                 {seriesPoints + (qualified ? Math.max(1, 13 - snap.rank) : 0)}
-              </strong>{' '}
-              · Round {selected + 1} of {COURSES.length}
+              </strong>
+              {t(' ')}
+              {t('· Round ')}
+              {selected + 1}
+              {t(' of ')}
+              {COURSES.length}
             </p>
           )}
           {inParty ? (
@@ -1924,30 +2031,34 @@ export default function Game() {
                   .map((p) => (
                     <li key={p.id}>
                       <b>
-                        {snap.places[p.id]?.place
-                          ? `#${snap.places[p.id].place}`
-                          : '—'}
+                        {t(
+                          snap.places[p.id]?.place
+                            ? `#${snap.places[p.id].place}`
+                            : '—',
+                        )}
                       </b>
                       <span>
-                        {p.name}
-                        {p.id === partyView.self ? ' (you)' : ''}
+                        {t(p.name)}
+                        {t(p.id === partyView.self ? ' (you)' : '')}
                       </span>
                       <strong>
-                        {snap.places[p.id]?.place
-                          ? formatTime(snap.places[p.id].time)
-                          : 'DNF'}
+                        {t(
+                          snap.places[p.id]?.place
+                            ? formatTime(snap.places[p.id].time)
+                            : 'DNF',
+                        )}
                       </strong>
                     </li>
                   ))}
               </ul>
               <output className="next-round">
-                <span>NEXT RACE IN</span>
+                <span>{t('NEXT RACE IN')}</span>
                 <strong>{partyView.nextIn || 'GO'}</strong>
-                <b>{partyView.nextName}</b>
-                <small>Same room. Same friends. New course.</small>
+                <b>{t(partyView.nextName)}</b>
+                <small>{t('Same room. Same friends. New course.')}</small>
               </output>
               <button className="text-button" onClick={leaveParty}>
-                Leave room
+                {t('Leave room')}
               </button>
             </>
           ) : (!series || qualified) &&
@@ -1955,25 +2066,29 @@ export default function Game() {
             selected < COURSES.length - 1 &&
             !!snap.place ? (
             <button className="play-button" onClick={next}>
-              NEXT COURSE <ArrowRight size={24} />
+              {t('NEXT COURSE ')}
+              <ArrowRight size={24} />
             </button>
           ) : series && selected === COURSES.length - 1 && qualified ? (
             <button className="play-button" onClick={home}>
-              CHAMPION’S LAP COMPLETE <Crown size={24} />
+              {t('CHAMPION’S LAP COMPLETE ')}
+              <Crown size={24} />
             </button>
           ) : (
             <button className="play-button" onClick={() => load(course, true)}>
-              LET’S GO AGAIN <RotateCcw size={22} />
+              {t('LET’S GO AGAIN ')}
+              <RotateCcw size={22} />
             </button>
           )}
           {!inParty && (
             <div className="result-links">
               <button onClick={() => load(course, true)}>
                 <RotateCcw size={15} />
-                Race again
+                {t('Race again')}
               </button>
               <button onClick={home}>
-                Back to lobby <ArrowUpRight size={15} />
+                {t('Back to lobby ')}
+                <ArrowUpRight size={15} />
               </button>
             </div>
           )}

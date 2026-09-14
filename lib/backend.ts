@@ -6,6 +6,7 @@ import {
 import { parseRecipe, type CourseRecipe } from './course-builder.ts';
 import { normalizeCosmetics, type Cosmetics } from './cosmetics.ts';
 import { parseProgression, type Progression } from './progression.ts';
+import { installRewards } from './course-rewards.ts';
 export {
   normalizeCosmetics,
   DEFAULT_COSMETICS,
@@ -31,6 +32,17 @@ export type SavedRecipe = {
 export type PublishedLevel = SavedRecipe & {
   revision: number;
   retiredAt: string | null;
+  courseNumber: number;
+  releaseVersion: string;
+  description: string;
+  sourceId: string | null;
+};
+export type ReleaseEntry = {
+  recipe: CourseRecipe;
+  sourceId: string | null;
+  id?: string;
+  revision?: number;
+  description: string;
 };
 export type StaffUser = {
   userId: string;
@@ -130,6 +142,10 @@ function parsePublished(value: unknown): PublishedLevel {
     ...saved,
     revision: Number(v.revision),
     retiredAt: v.retired_at === null ? null : string(v.retired_at),
+    courseNumber: Number(v.course_number) || 0,
+    releaseVersion: string(v.release_version),
+    description: string(v.description),
+    sourceId: typeof v.source_id === 'string' ? uuid(v.source_id) : null,
   };
 }
 export function parseQueueStatus(value: unknown): QueueStatus {
@@ -221,6 +237,7 @@ function canonicalRecipe(value: CourseRecipe): CourseRecipe {
 }
 
 export class GameBackend {
+  catalogVersion = 'v0.0.0';
   readonly client: SupabaseClient | null;
   readonly providers: { google: boolean; apple: boolean; email: boolean };
   constructor(config: BackendConfig = backendConfig) {
@@ -374,20 +391,62 @@ export class GameBackend {
   }
   async publishedLevels(): Promise<PublishedLevel[]> {
     if (!this.client) return [];
-    const { data, error } = await this.client
-      .from('tc_published_levels')
-      .select('id,recipe,revision,updated_at,retired_at')
-      .is('retired_at', null)
-      .order('created_at', { ascending: false })
-      .limit(1000);
-    if (error) throw error;
-    return (data ?? []).map(parsePublished);
+    const data = record(await this.rpc('tc_course_catalog'));
+    if (!Array.isArray(data.levels))
+      throw new Error('The course catalog could not be loaded.');
+    installRewards(data.targets);
+    this.catalogVersion =
+      typeof data.version === 'string' ? data.version : 'v0.0.0';
+    try {
+      localStorage.setItem('tumble-catalog-v1', JSON.stringify(data));
+    } catch {
+      /* Optional offline catalog. */
+    }
+    return data.levels.map(parsePublished);
+  }
+  cachedLevels(): PublishedLevel[] {
+    try {
+      const data = record(
+        JSON.parse(localStorage.getItem('tumble-catalog-v1') ?? 'null'),
+      );
+      installRewards(data.targets);
+      this.catalogVersion =
+        typeof data.version === 'string' ? data.version : 'v0.0.0';
+      return Array.isArray(data.levels) ? data.levels.map(parsePublished) : [];
+    } catch {
+      return [];
+    }
   }
   async staffCatalog(): Promise<PublishedLevel[]> {
     const data = await this.rpc('tc_staff_catalog');
     if (!Array.isArray(data))
       throw new Error('The course catalog could not be loaded.');
     return data.map(parsePublished);
+  }
+  async publishRelease(
+    comment: string,
+    entries: ReleaseEntry[],
+    requestId: string,
+  ): Promise<{ version: string; levels: PublishedLevel[] }> {
+    const data = record(
+      await this.rpc('tc_release_publish', {
+        p_comment: comment.trim(),
+        p_request_id: uuid(requestId),
+        p_entries: entries.map((e) => ({
+          recipe: canonicalRecipe(e.recipe),
+          source_id: e.sourceId,
+          id: e.id ?? null,
+          revision: e.revision ?? null,
+          description: e.description.trim(),
+        })),
+      }),
+    );
+    if (!Array.isArray(data.levels))
+      throw new Error('The course release could not be loaded.');
+    return {
+      version: string(data.version),
+      levels: data.levels.map(parsePublished),
+    };
   }
   async publish(
     recipe: CourseRecipe,

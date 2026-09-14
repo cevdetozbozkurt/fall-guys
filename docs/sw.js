@@ -1,5 +1,5 @@
-const VERSION = "tumble-club-ab11d57cac6d";
-const PRECACHE = ["./","./manifest.webmanifest","./icon-192.png","./icon-512.png","./cosmos.webp","./assets/avatar-2I5ax88q.js","./assets/avatar-view-CkDgH5tY.js","./assets/bundler-BEDDKW0l.js","./assets/cosmos-CNUOFipv.webp","./assets/index-02alk9Yi.css","./assets/index-DACRTWXW.js","./assets/match-peer-Dy58SQMt.js","./assets/multiplayer-q_pr2n5f.js","./assets/scene-zJ_mj1tO.js"];
+const VERSION = "tumble-club-37f152545364";
+const PRECACHE = ["./","./manifest.webmanifest","./icon-192.png","./icon-512.png","./cosmos.webp","./flags/tr.svg","./flags/gb.svg","./flags/fr.svg","./flags/de.svg","./assets/avatar-fPg01cX_.js","./assets/avatar-view-D8cHHIiM.js","./assets/bundler-DZlxCDEb.js","./assets/cosmos-CNUOFipv.webp","./assets/index-COha8cqs.css","./assets/index-Dlfa7TfG.js","./assets/match-peer-Bvi425-q.js","./assets/multiplayer-DhY-YPSV.js","./assets/scene-DtCBP-yj.js"];
 self.addEventListener('install', (event) =>
   event.waitUntil(caches.open(VERSION).then((cache) => cache.addAll(PRECACHE))),
 );

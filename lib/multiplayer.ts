@@ -318,7 +318,7 @@ export class Party {
     this.peer =
       online?.lease.peer ??
       (host
-        ? new Peer(`tumble-club-v4-${this.view.code}`, { debug: 0 })
+        ? new Peer(`tumble-club-v5-${this.view.code}`, { debug: 0 })
         : new Peer({ debug: 0 }));
     this.timer = setTimeout(
       () =>
@@ -387,7 +387,7 @@ export class Party {
         this.callbacks.roster(this.view.members, 0);
       } else {
         const c = this.peer!.connect(
-          online?.assignment.hostPeerId ?? `tumble-club-v4-${this.view.code}`,
+          online?.assignment.hostPeerId ?? `tumble-club-v5-${this.view.code}`,
           {
             reliable: true,
             serialization: 'json',
@@ -399,7 +399,7 @@ export class Party {
             type: 'join',
             name: cleanName(name),
             color,
-            protocol: 4,
+            protocol: 5,
             cosmetics: normalizeCosmetics({
               ...cosmetics,
               color: OUTFIT_COLORS[color],
@@ -445,7 +445,7 @@ export class Party {
         const m = data as Record<string, unknown>;
         if (id < 0) {
           if (admitting) return;
-          if (m.type !== 'join' || m.protocol !== 4) {
+          if (m.type !== 'join' || m.protocol !== 5) {
             this.send(c, {
               type: 'error',
               message: 'Please reload the game before joining.',
@@ -723,7 +723,14 @@ export class Party {
     ) {
       const recipe = parseRecipe(m.recipe);
       const course = recipe
-        ? buildCourse(recipe)
+        ? buildCourse(
+            recipe,
+            Number.isSafeInteger(m.catalogNumber) &&
+              Number(m.catalogNumber) >= 51 &&
+              Number(m.catalogNumber) <= 10000
+              ? Number(m.catalogNumber)
+              : recipeKey(recipe),
+          )
         : Number.isInteger(m.course)
           ? COURSES[Number(m.course)]
           : null;
@@ -1014,6 +1021,9 @@ export class Party {
       round: this.round,
       course: this.sim.course.recipe ? -1 : this.sim.course.id - 1,
       recipe: this.sim.course.recipe,
+      catalogNumber: COURSES.some((c) => c.id === this.sim.course.id)
+        ? this.sim.course.id
+        : undefined,
       state: this.sim.state === 'finished' ? 'racing' : this.sim.state,
     };
   }

@@ -1,7 +1,8 @@
 'use client';
+import { t } from '@/lib/i18n';
+
 import { useCallback, useEffect, useState } from 'react';
 import {
-  ArrowUpRight,
   Crown,
   Pencil,
   RefreshCw,
@@ -16,14 +17,17 @@ import {
   type GameBackend,
   type PublishedLevel,
   type StaffUser,
+  type SavedRecipe,
 } from '@/lib/backend';
-import { parseRecipe, type CourseRecipe } from '@/lib/course-builder';
+import ReleaseComposer from './release-composer';
+import { type CourseRecipe } from '@/lib/course-builder';
 import './account-panel.css';
 import { Input } from '@/components/ui/input';
 
 export default function StaffPanel({
   account,
   draft,
+  saved,
   onEdit,
   onPublished,
   editing: updating,
@@ -32,6 +36,7 @@ export default function StaffPanel({
 }: {
   account: Account | null;
   draft: CourseRecipe;
+  saved: SavedRecipe[];
   onEdit: (recipe: CourseRecipe) => void;
   editing: PublishedLevel | null;
   setEditing: (level: PublishedLevel | null) => void;
@@ -94,67 +99,38 @@ export default function StaffPanel({
         </div>
         <div>
           <span className="tc-eyebrow">
-            {account.role === 'owner' ? 'Club owner' : 'Course designer'}
+            {t(account.role === 'owner' ? 'Club owner' : 'Course designer')}
           </span>
-          <h2>Design studio</h2>
+          <h2>{t('Design studio')}</h2>
         </div>
       </div>
-      <div className="tc-publish-card">
-        <span className="tc-eyebrow">Current builder draft</span>
-        <h3>{draft.name || 'Untitled course'}</h3>
-        <p>
-          {draft.segments.length} sections ·{' '}
-          {updating
-            ? `Updating “${updating.recipe.name}”`
-            : 'Publish as a new course'}
-        </p>
-        <div className="tc-inline-actions">
-          <button
-            type="button"
-            className="tc-primary"
-            disabled={busy || !parseRecipe(draft)}
-            onClick={() =>
-              void run(async () => {
-                const result = await backend.publish(
-                  draft,
-                  updating ?? undefined,
-                );
-                setUpdating(null);
-                await refresh();
-                await onPublished();
-                setMessage(
-                  `“${result.recipe.name}” is now in the public courses list.`,
-                );
-              })
-            }
-          >
-            <ArrowUpRight size={17} />
-            {updating ? 'Publish update' : 'Publish course'}
-          </button>
-          {updating && (
-            <button
-              type="button"
-              className="tc-text-button"
-              onClick={() => setUpdating(null)}
-            >
-              Publish as new instead
-            </button>
-          )}
-        </div>
-        <p className="tc-muted">
-          Playtest the current draft in the builder before publishing. Published
-          courses appear for everyone.
-        </p>
-      </div>
+      <ReleaseComposer
+        saved={saved}
+        catalog={catalog}
+        draft={draft}
+        editing={updating}
+        backend={backend}
+        busy={busy}
+        run={run}
+        onClear={() => setUpdating(null)}
+        onPublished={async (version) => {
+          await refresh();
+          await onPublished();
+          setMessage(
+            `Published ${version}. Courses are now in the main course sequence.`,
+          );
+        }}
+      />
       <div className="tc-section-heading">
         <h3>
-          Published courses{' '}
+          {t('Published courses')}
+          {t(' ')}
           <span>{catalog.filter((c) => !c.retiredAt).length}</span>
         </h3>
         <button
           type="button"
           className="tc-icon-button"
-          aria-label="Refresh published courses"
+          aria-label={t('Refresh published courses')}
           disabled={busy}
           onClick={() => void run(refresh)}
         >
@@ -167,9 +143,14 @@ export default function StaffPanel({
           .map((level) => (
             <li key={level.id}>
               <div>
-                <strong>{level.recipe.name}</strong>
+                <strong>
+                  {t(level.courseNumber ? `${level.courseNumber}. ` : '')}
+                  {level.recipe.name}
+                </strong>
                 <small>
-                  {level.recipe.segments.length} sections · revision{' '}
+                  {level.recipe.segments.length}
+                  {t(' sections · revision')}
+                  {t(' ')}
                   {level.revision}
                 </small>
               </div>
@@ -177,7 +158,7 @@ export default function StaffPanel({
                 <button
                   className="tc-icon-button"
                   type="button"
-                  aria-label={`Edit ${level.recipe.name}`}
+                  aria-label={t(`Edit ${level.recipe.name}`)}
                   disabled={busy}
                   onClick={() => {
                     setUpdating(level);
@@ -192,7 +173,7 @@ export default function StaffPanel({
                 <button
                   className="tc-icon-button"
                   type="button"
-                  aria-label={`Retire ${level.recipe.name}`}
+                  aria-label={t(`Retire ${level.recipe.name}`)}
                   disabled={busy}
                   onClick={() =>
                     void run(async () => {
@@ -214,7 +195,7 @@ export default function StaffPanel({
       </ul>
       {!catalog.some((level) => !level.retiredAt) && (
         <p className="tc-muted">
-          Your first published course will appear here.
+          {t('Your first published course will appear here.')}
         </p>
       )}
       {account.role === 'owner' && (
@@ -222,21 +203,22 @@ export default function StaffPanel({
           <div className="tc-section-heading">
             <h3>
               <ShieldCheck size={18} />
-              Course designers
+              {t('Course designers')}
             </h3>
           </div>
           <p className="tc-muted">
-            Designers can publish and retire courses. Only you can manage this
-            permission.
+            {t(
+              'Designers can publish and retire courses. Only you can manage this permission.',
+            )}
           </p>
           <form className="tc-search-form" onSubmit={search}>
             <label htmlFor="tc-staff-search">
-              Find a player
+              {t('Find a player')}
               <Input
                 id="tc-staff-search"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Username or full account email"
+                placeholder={t('Username or full account email')}
                 minLength={3}
                 maxLength={128}
                 required
@@ -244,18 +226,18 @@ export default function StaffPanel({
             </label>
             <button type="submit" className="tc-secondary" disabled={busy}>
               <Search size={17} />
-              Search
+              {t('Search')}
             </button>
           </form>
           <ul className="tc-catalog-list">
             {users.map((user) => (
               <li key={user.userId}>
                 <div>
-                  <strong>{user.username ?? 'Player name not set'}</strong>
-                  <small>{user.email}</small>
+                  <strong>{t(user.username ?? 'Player name not set')}</strong>
+                  <small>{t(user.email)}</small>
                 </div>
                 {user.role === 'owner' ? (
-                  <span className="tc-role-badge">Owner</span>
+                  <span className="tc-role-badge">{t('Owner')}</span>
                 ) : (
                   <button
                     type="button"
@@ -278,9 +260,11 @@ export default function StaffPanel({
                       })
                     }
                   >
-                    {user.role === 'designer'
-                      ? 'Remove access'
-                      : 'Make designer'}
+                    {t(
+                      user.role === 'designer'
+                        ? 'Remove access'
+                        : 'Make designer',
+                    )}
                   </button>
                 )}
               </li>
@@ -288,18 +272,19 @@ export default function StaffPanel({
           </ul>
           {searched && !users.length && (
             <p className="tc-muted">
-              No verified players found. Try their full email address or the
-              start of their username.
+              {t(
+                'No verified players found. Try their full email address or the start of their username.',
+              )}
             </p>
           )}
         </section>
       )}
       {error && (
         <p className="tc-notice tc-error" role="alert">
-          {error}
+          {t(error)}
         </p>
       )}
-      {message && <output className="tc-notice">{message}</output>}
+      {message && <output className="tc-notice">{t(message)}</output>}
     </section>
   );
 }

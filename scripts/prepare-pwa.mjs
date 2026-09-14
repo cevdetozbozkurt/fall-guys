@@ -23,6 +23,10 @@ source = source.replace(
       './icon-192.png',
       './icon-512.png',
       './cosmos.webp',
+      './flags/tr.svg',
+      './flags/gb.svg',
+      './flags/fr.svg',
+      './flags/de.svg',
       ...files,
     ]) +
     ';',

@@ -88,7 +88,29 @@ export const MODULES = [
   },
 ] as const;
 export type ModuleKey = (typeof MODULES)[number]['key'];
-export type Segment = { type: ModuleKey; difficulty: 1 | 2 | 3 };
+export const OBSTACLE_TYPES = [
+  'bar',
+  'hurdle',
+  'hammer',
+  'falling',
+  'bumper',
+  'pendulum',
+  'pusher',
+] as const;
+export type ObstaclePlacement = {
+  type: (typeof OBSTACLE_TYPES)[number];
+  lane: 'main' | 'risk' | 'cruise';
+  /** Distance along the chosen route, as a percentage. */
+  at: number;
+  /** Across the usable lane: -1 left edge, 0 centre, +1 right edge. */
+  offset: number;
+};
+export const MAX_OBSTACLES = 16;
+export type Segment = {
+  type: ModuleKey;
+  difficulty: 1 | 2 | 3;
+  obstacles?: ObstaclePlacement[];
+};
 export type CourseRecipe = { version: 1; name: string; segments: Segment[] };
 export const MAX_SEGMENTS = 10;
 export const MIN_SEGMENTS = 3;
@@ -124,9 +146,38 @@ export function parseRecipe(value: unknown): CourseRecipe | null {
       ![1, 2, 3].includes(entry.difficulty)
     )
       return null;
+    if (
+      entry.obstacles !== undefined &&
+      (!Array.isArray(entry.obstacles) ||
+        entry.obstacles.length > MAX_OBSTACLES ||
+        entry.obstacles.some(
+          (o: ObstaclePlacement) =>
+            !o ||
+            !OBSTACLE_TYPES.includes(o.type) ||
+            !(entry.type === 'fork' ? ['risk', 'cruise'] : ['main']).includes(
+              o.lane,
+            ) ||
+            !Number.isFinite(o.at) ||
+            o.at < 5 ||
+            o.at > 95 ||
+            !Number.isFinite(o.offset) ||
+            Math.abs(o.offset) > 1,
+        ))
+    )
+      return null;
     segments.push({
       type: entry.type as ModuleKey,
       difficulty: entry.difficulty as 1 | 2 | 3,
+      ...(entry.obstacles !== undefined
+        ? {
+            obstacles: entry.obstacles.map((o: ObstaclePlacement) => ({
+              type: o.type,
+              lane: o.lane,
+              at: o.at,
+              offset: o.offset,
+            })),
+          }
+        : {}),
     });
   }
   const name = v.name
@@ -138,6 +189,48 @@ export function parseRecipe(value: unknown): CourseRecipe | null {
     .slice(0, 36);
   if (!name) return null;
   return { version: 1, name, segments };
+}
+export function defaultObstacles(segment: Segment): ObstaclePlacement[] {
+  const d = segment.difficulty;
+  const row = (
+    type: ObstaclePlacement['type'],
+    at: number,
+    offset = 0,
+    lane: ObstaclePlacement['lane'] = 'main',
+  ): ObstaclePlacement => ({ type, at, offset, lane });
+  const series = (type: ObstaclePlacement['type'], count: number) =>
+    Array.from({ length: count }, (_, n) =>
+      row(type, 20 + (n * 60) / Math.max(1, count - 1), n % 2 ? 0.4 : -0.4),
+    );
+  switch (segment.type) {
+    case 'spin':
+      return series('bar', d + 1);
+    case 'hammer':
+      return series('hammer', d + 1);
+    case 'falling':
+      return series('falling', 3 + d);
+    case 'slalom':
+      return [
+        ...series('falling', 3 + d),
+        row('hurdle', 38, 0.4),
+        row('hurdle', 68, -0.4),
+      ];
+    case 'left':
+    case 'right':
+      return series('hurdle', d + 1);
+    case 'fork':
+      return [
+        row('bar', 68, 0, 'risk'),
+        ...(d > 1 ? [row('hammer', 29, 0, 'risk')] : []),
+        row('hurdle', 55, 0.35, 'cruise'),
+      ];
+    case 'belt':
+      return [row('hurdle', 43)];
+    case 'slide':
+      return [row('bumper', 88, 0.4)];
+    default:
+      return [];
+  }
 }
 export function recipeKey(recipe: CourseRecipe) {
   const value = JSON.stringify(recipe);
@@ -187,6 +280,10 @@ export function buildCourse(
       width = 16 - d * 2;
     const localPlatforms: Platform[] = [],
       localObstacles: Obstacle[] = [];
+    const localLanes: {
+      id: string;
+      points: { x: number; z: number; progress: number }[];
+    }[] = [];
     const add = (
       start: number,
       end: number,
@@ -203,7 +300,8 @@ export function buildCourse(
     const lane = (
       id: string,
       points: { x: number; z: number; progress: number }[],
-    ) =>
+    ) => {
+      localLanes.push({ id, points });
       routes.push({
         id,
         points: points.map((p) => ({
@@ -211,6 +309,7 @@ export function buildCourse(
           progress: cursor + p.progress,
         })),
       });
+    };
     const pave = (
       points: { x: number; z: number }[],
       w: number,
@@ -254,7 +353,18 @@ export function buildCourse(
       ...checkpoint,
       yaw: origin.yaw,
       progress: cursor + 1,
-      halfWidth: 7,
+      halfWidth:
+        (['left', 'right', 'slalom'].includes(segment.type)
+          ? 11 - d
+          : segment.type === 'fork'
+            ? 10
+            : ['open', 'spin', 'hammer', 'falling', 'jump', 'drop'].includes(
+                  segment.type,
+                )
+              ? width
+              : ['belt', 'slide'].includes(segment.type)
+                ? width
+                : 14) / 2,
     });
     let end = { x: 0, z: 40 },
       length = 40,
@@ -293,8 +403,8 @@ export function buildCourse(
     } else if (segment.type === 'fork') {
       length = 76;
       end = { x: 0, z: 76 };
-      add(0, 9, 16);
-      add(68, 76, 16);
+      add(0, 9, 10);
+      add(68, 76, 10);
       const hardBefore = roundPath([
         { x: 0, z: 8 },
         { x: -12, z: 24 },
@@ -342,13 +452,23 @@ export function buildCourse(
     } else if (segment.type === 'slalom') {
       length = 54;
       end = { x: 0, z: 54 };
-      const points = roundPath([
-        { x: 0, z: 0, progress: 0 },
-        { x: -6, z: 12, progress: 12 },
-        { x: 6, z: 28, progress: 28 },
-        { x: -5, z: 43, progress: 43 },
-        { x: 0, z: 54, progress: 54 },
-      ]).map((p) => ({ ...p, progress: p.progress! }));
+      const points = Array.from({ length: 109 }, (_, n) => {
+        const t = n / 108;
+        return {
+          x: -6 * Math.sin(2 * Math.PI * t) * Math.sin(Math.PI * t) ** 2,
+          z: 54 * t,
+          yaw: Math.atan2(
+            -12 *
+              Math.PI *
+              (Math.cos(2 * Math.PI * t) * Math.sin(Math.PI * t) ** 2 +
+                Math.sin(2 * Math.PI * t) *
+                  Math.sin(Math.PI * t) *
+                  Math.cos(Math.PI * t)),
+            54,
+          ),
+          progress: 54 * t,
+        };
+      });
       pave(points, 11 - d);
       lane('slalom-' + i, points);
       localObstacles.push(
@@ -446,6 +566,69 @@ export function buildCourse(
                 phase: n * 0.71 + i,
               });
       }
+    }
+    // Resolve every authored obstacle in its own lane frame, including on ramps.
+    localObstacles.length = 0;
+    for (const [n, placement] of (
+      segment.obstacles ?? defaultObstacles(segment)
+    ).entries()) {
+      const route = localLanes.find(
+        (l) =>
+          placement.lane === 'main' ||
+          l.id.endsWith(placement.lane === 'risk' ? 'hard' : 'easy'),
+      )!;
+      const distances = route.points
+        .slice(1)
+        .map((p, j) =>
+          Math.hypot(p.x - route.points[j].x, p.z - route.points[j].z),
+        );
+      let remaining =
+        (distances.reduce((a, b) => a + b, 0) * placement.at) / 100;
+      let j = 0;
+      while (j < distances.length - 1 && remaining > distances[j])
+        remaining -= distances[j++];
+      const a = route.points[j],
+        b = route.points[j + 1],
+        t = remaining / distances[j];
+      const yaw = Math.atan2(b.x - a.x, b.z - a.z);
+      const laneWidth =
+        segment.type === 'fork'
+          ? placement.lane === 'risk'
+            ? 7 - d * 0.5
+            : 10
+          : ['left', 'right', 'slalom'].includes(segment.type)
+            ? 11 - d
+            : width;
+      const across = placement.offset * Math.max(0, laneWidth / 2 - 1.2);
+      const x = a.x + (b.x - a.x) * t + across * Math.cos(yaw),
+        z = a.z + (b.z - a.z) * t - across * Math.sin(yaw);
+      let y = 0;
+      for (const p of localPlatforms) {
+        const px =
+          (x - p.x) * Math.cos(p.yaw ?? 0) - (z - p.z) * Math.sin(p.yaw ?? 0);
+        const pz =
+          (x - p.x) * Math.sin(p.yaw ?? 0) + (z - p.z) * Math.cos(p.yaw ?? 0);
+        if (Math.abs(px) <= p.w / 2 && Math.abs(pz) <= p.d / 2)
+          y = Math.max(y, platformHeight(p, z, x));
+      }
+      localObstacles.push({
+        type: placement.type,
+        x,
+        z,
+        y,
+        yaw,
+        radius:
+          placement.type === 'bar'
+            ? laneWidth / 2 - 1
+            : placement.type === 'hammer'
+              ? 1.4
+              : 1.15,
+        width: laneWidth * 0.48,
+        speed:
+          (placement.type === 'falling' ? 0.7 + d * 0.15 : 0.65 + d * 0.25) *
+          (placement.type === 'bar' && n % 2 ? -1 : 1),
+        phase: n * 0.83 + i * 0.47,
+      });
     }
     for (const p of localPlatforms)
       platforms.push({

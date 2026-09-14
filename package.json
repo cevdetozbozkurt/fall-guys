@@ -28,6 +28,7 @@
     "input-otp": "1.4.2",
     "lucide-react": "1.31.0",
     "peerjs": "^1.5.5",
+    "polygon-clipping": "^0.15.7",
     "react": "19.2.6",
     "react-day-picker": "9.8.1",
     "react-dom": "19.2.6",

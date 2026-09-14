@@ -1,4 +1,6 @@
 'use client';
+import { t } from '@/lib/i18n';
+
 /* oxlint-disable jsx-a11y/prefer-tag-over-role -- Interactive WebGL canvas is described as an image; an img tag cannot contain it. */
 import { useEffect, useRef } from 'react';
 import type { Cosmetics } from '@/lib/cosmetics';
@@ -30,7 +32,7 @@ export default function AvatarPreview({ outfit }: { outfit: Cosmetics }) {
         className="avatar-canvas"
         ref={container}
         role="img"
-        aria-label="Character preview. Drag to rotate."
+        aria-label={t('Character preview. Drag to rotate.')}
         onPointerDown={(e) => {
           e.currentTarget.setPointerCapture(e.pointerId);
           pointer.current = { x: e.clientX, y: e.clientY };
@@ -54,17 +56,17 @@ export default function AvatarPreview({ outfit }: { outfit: Cosmetics }) {
       <div className="avatar-rotate">
         <button
           type="button"
-          aria-label="Rotate character left"
+          aria-label={t('Rotate character left')}
           onClick={() => {
             if (view.current) view.current.yaw -= Math.PI / 4;
           }}
         >
           ↶
         </button>
-        <span>Drag to rotate · 360°</span>
+        <span>{t('Drag to rotate · 360°')}</span>
         <button
           type="button"
-          aria-label="Rotate character right"
+          aria-label={t('Rotate character right')}
           onClick={() => {
             if (view.current) view.current.yaw += Math.PI / 4;
           }}

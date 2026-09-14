@@ -1,4 +1,5 @@
 import { COURSES } from './courses.ts';
+import { REWARDS } from './course-rewards.ts';
 import { FREE_ITEMS, SHOP_ITEMS, OUTFIT_BUNDLES } from './cosmetics.ts';
 export type Progression = {
   version: 2;
@@ -13,18 +14,16 @@ export const newProgression = (): Progression => ({
   spent: 0,
 });
 export function starsFor(courseId: number, time: number) {
-  const course = COURSES[courseId - 1];
-  if (!course?.starTimes || !Number.isFinite(time) || time <= 0 || time > 150)
-    return 0;
-  return time <= course.starTimes.gold
-    ? 3
-    : time <= course.starTimes.silver
-      ? 2
-      : 1;
+  const target = REWARDS[courseId];
+  if (!target || !Number.isFinite(time) || time <= 0 || time > 150) return 0;
+  return time <= target.gold ? 3 : time <= target.silver ? 2 : 1;
 }
 export function unlockedThrough(progress: Progression) {
   let level = 1;
-  while (level < 50 && progress.best[level] > 0) level++;
+  for (const c of COURSES) {
+    level = c.id;
+    if (!(progress.best[c.id] > 0)) break;
+  }
   return level;
 }
 export function earnedStars(progress: Progression) {
@@ -44,7 +43,7 @@ export function recordFinish(
   if (
     !Number.isInteger(id) ||
     id < 1 ||
-    id > 50 ||
+    !COURSES.some((c) => c.id === id) ||
     id > unlockedThrough(progress) ||
     !starsFor(id, time)
   )
@@ -79,8 +78,16 @@ export function parseProgression(value: unknown): Progression {
   const data = value as Partial<Progression>;
   if (data.version !== 2) return newProgression();
   let result = newProgression();
-  for (let id = 1; id <= 50; id++)
+  for (const { id } of COURSES)
     if (data.best?.[id]) result = recordFinish(result, id, data.best[id]);
+  // Retired courses keep their earned stars, but no longer block new unlocks.
+  for (const [id, time] of Object.entries(data.best ?? {}))
+    if (
+      Number(id) > 50 &&
+      !COURSES.some((c) => c.id === Number(id)) &&
+      starsFor(Number(id), time)
+    )
+      result.best[id] = time;
   const owned = Array.isArray(data.owned)
     ? data.owned.filter(
         (id) => typeof id === 'string' && SHOP_ITEMS.some((i) => i.id === id),

@@ -85,7 +85,7 @@ function localObstaclePose(o: Obstacle, t: number) {
     };
   }
   if (o.type === 'pusher')
-    return { x: o.x + Math.sin(phase) * 3.2, y: 1, z: o.z, angle: 0 };
+    return { x: o.x + Math.sin(phase) * 3.2, y: base + 1, z: o.z, angle: 0 };
   return { x: o.x, y: base + 0.65, z: o.z, angle: phase };
 }
 
